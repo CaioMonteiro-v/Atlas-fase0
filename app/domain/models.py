@@ -217,6 +217,10 @@ class JourneyCreate(BaseModel):
     project_id: str | None = None
 
 
+class JourneyStatusUpdate(BaseModel):
+    status: JourneyStatus
+
+
 class Project(AtlasModel):
     id: str = Field(default_factory=new_id)
     user_id: str
@@ -259,6 +263,7 @@ class FinanceTransaction(AtlasModel):
     id: str = Field(default_factory=new_id)
     user_id: str
     account_id: str
+    to_account_id: str | None = None
     kind: FinanceTxKind
     amount: float = Field(gt=0)
     category: str = "geral"
@@ -274,6 +279,23 @@ class FinanceTransactionCreate(BaseModel):
     category: str = "geral"
     description: str = ""
     occurred_at: datetime | None = None
+    to_account_id: str | None = None  # obrigatório em transferencia
+
+
+class FinanceReport(AtlasModel):
+    """Fluxo mensal por categoria — visão madura do domínio financeiro."""
+
+    month: str  # YYYY-MM
+    receita: float = 0.0
+    despesa: float = 0.0
+    poupanca: float = 0.0
+    por_categoria: list[dict[str, Any]] = Field(default_factory=list)
+    lancamentos: int = 0
+
+
+class StartFinanceWithAyra(BaseModel):
+    goal: str = Field(min_length=3, max_length=400)
+    focus: Literal["organizar", "reserva", "dividas", "investir", "orcamento"] = "organizar"
 
 
 class FinanceGoal(AtlasModel):
@@ -714,9 +736,22 @@ class CabinetAgendaCreate(BaseModel):
 class CabinetSnapshot(AtlasModel):
     demandas_abertas: int = 0
     demandas_urgentes: int = 0
+    demandas_atrasadas: int = 0
     municipios: list[str] = Field(default_factory=list)
     recentes: list[CabinetDemand] = Field(default_factory=list)
     agenda: list[CabinetAgendaItem] = Field(default_factory=list)
+    proximo_compromisso: CabinetAgendaItem | None = None
+
+
+class CabinetAgendaUpdate(BaseModel):
+    status: AgendaStatus | None = None
+    notes: str | None = None
+
+
+class StartCabinetWithAyra(BaseModel):
+    topic: str = Field(min_length=3, max_length=400)
+    municipality: str = ""
+    demand_id: str | None = None
 
 
 # --------------------------------------------------------------------------

@@ -75,10 +75,14 @@ class FinanceStore:
 
     # ------------------------------------------------------------- lançamentos
     def add_transaction(self, tx: FinanceTransaction) -> FinanceTransaction:
-        delta = tx.amount if tx.kind == "receita" else -tx.amount
         if tx.kind == "transferencia":
-            delta = -tx.amount  # saída da conta origem; destino entra por outro lançamento
+            if not tx.to_account_id:
+                raise ValueError("transferência exige to_account_id")
+            if tx.to_account_id == tx.account_id:
+                raise ValueError("contas de origem e destino devem ser diferentes")
+            return self._transfer(tx)
 
+        delta = tx.amount if tx.kind == "receita" else -tx.amount
         with self.db.tx() as c:
             own = c.execute(
                 "SELECT id FROM finance_accounts WHERE id = ? AND user_id = ?",
@@ -89,11 +93,11 @@ class FinanceStore:
 
             c.execute(
                 """INSERT INTO finance_transactions
-                   (id, user_id, account_id, kind, amount, category, description,
+                   (id, user_id, account_id, to_account_id, kind, amount, category, description,
                     occurred_at, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    tx.id, tx.user_id, tx.account_id, tx.kind, tx.amount,
+                    tx.id, tx.user_id, tx.account_id, tx.to_account_id, tx.kind, tx.amount,
                     tx.category, tx.description, _iso(tx.occurred_at), _iso(tx.created_at),
                 ),
             )
@@ -104,6 +108,74 @@ class FinanceStore:
                 (delta, _iso(utcnow()), tx.account_id, tx.user_id),
             )
         return tx
+
+    def _transfer(self, tx: FinanceTransaction) -> FinanceTransaction:
+        with self.db.tx() as c:
+            src = c.execute(
+                "SELECT id FROM finance_accounts WHERE id = ? AND user_id = ?",
+                (tx.account_id, tx.user_id),
+            ).fetchone()
+            dst = c.execute(
+                "SELECT id FROM finance_accounts WHERE id = ? AND user_id = ?",
+                (tx.to_account_id, tx.user_id),
+            ).fetchone()
+            if not src or not dst:
+                raise ValueError("conta de origem ou destino não encontrada")
+
+            c.execute(
+                """INSERT INTO finance_transactions
+                   (id, user_id, account_id, to_account_id, kind, amount, category, description,
+                    occurred_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    tx.id, tx.user_id, tx.account_id, tx.to_account_id, "transferencia",
+                    tx.amount, tx.category or "transferencia", tx.description,
+                    _iso(tx.occurred_at), _iso(tx.created_at),
+                ),
+            )
+            now = _iso(utcnow())
+            c.execute(
+                """UPDATE finance_accounts SET balance = balance - ?, updated_at = ?
+                   WHERE id = ? AND user_id = ?""",
+                (tx.amount, now, tx.account_id, tx.user_id),
+            )
+            c.execute(
+                """UPDATE finance_accounts SET balance = balance + ?, updated_at = ?
+                   WHERE id = ? AND user_id = ?""",
+                (tx.amount, now, tx.to_account_id, tx.user_id),
+            )
+        return tx
+
+    def delete_transaction(self, user_id: str, tx_id: str) -> bool:
+        """Remove lançamento e reverte o saldo (melhor esforço)."""
+        with self.db.tx() as c:
+            r = c.execute(
+                "SELECT * FROM finance_transactions WHERE id = ? AND user_id = ?",
+                (tx_id, user_id),
+            ).fetchone()
+            if not r:
+                return False
+            kind, amount = r["kind"], float(r["amount"])
+            account_id = r["account_id"]
+            to_id = r["to_account_id"] if "to_account_id" in r.keys() else None
+            now = _iso(utcnow())
+            if kind == "transferencia" and to_id:
+                c.execute(
+                    "UPDATE finance_accounts SET balance = balance + ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                    (amount, now, account_id, user_id),
+                )
+                c.execute(
+                    "UPDATE finance_accounts SET balance = balance - ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                    (amount, now, to_id, user_id),
+                )
+            else:
+                delta = -amount if kind == "receita" else amount
+                c.execute(
+                    "UPDATE finance_accounts SET balance = balance + ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                    (delta, now, account_id, user_id),
+                )
+            c.execute("DELETE FROM finance_transactions WHERE id = ? AND user_id = ?", (tx_id, user_id))
+        return True
 
     def list_transactions(
         self,
@@ -125,6 +197,41 @@ class FinanceStore:
         params.append(limit)
         rows = self.db.connect().execute(sql, params).fetchall()
         return [self._to_tx(r) for r in rows]
+
+    def monthly_report(self, user_id: str, month: str | None = None) -> dict[str, Any]:
+        now = utcnow()
+        if not month:
+            month = f"{now.year:04d}-{now.month:02d}"
+        year, mon = map(int, month.split("-"))
+        start = datetime(year, mon, 1, tzinfo=timezone.utc)
+        if mon == 12:
+            end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            end = datetime(year, mon + 1, 1, tzinfo=timezone.utc)
+
+        txs = [
+            t for t in self.list_transactions(user_id, limit=5000, since=start)
+            if t.occurred_at and t.occurred_at < end
+        ]
+        receita = sum(t.amount for t in txs if t.kind == "receita")
+        despesa = sum(t.amount for t in txs if t.kind == "despesa")
+        by_cat: dict[str, float] = {}
+        for t in txs:
+            if t.kind != "despesa":
+                continue
+            by_cat[t.category or "geral"] = by_cat.get(t.category or "geral", 0.0) + t.amount
+        por_categoria = [
+            {"categoria": k, "total": round(v, 2), "pct": round(100 * v / despesa, 1) if despesa else 0.0}
+            for k, v in sorted(by_cat.items(), key=lambda x: -x[1])
+        ]
+        return {
+            "month": month,
+            "receita": round(receita, 2),
+            "despesa": round(despesa, 2),
+            "poupanca": round(receita - despesa, 2),
+            "por_categoria": por_categoria,
+            "lancamentos": len(txs),
+        }
 
     # ------------------------------------------------------------------- metas
     def create_goal(self, goal: FinanceGoal) -> FinanceGoal:
@@ -232,8 +339,11 @@ class FinanceStore:
 
     @staticmethod
     def _to_tx(r: sqlite3.Row) -> FinanceTransaction:
+        keys = r.keys()
         return FinanceTransaction(
-            id=r["id"], user_id=r["user_id"], account_id=r["account_id"], kind=r["kind"],
+            id=r["id"], user_id=r["user_id"], account_id=r["account_id"],
+            to_account_id=r["to_account_id"] if "to_account_id" in keys else None,
+            kind=r["kind"],
             amount=r["amount"], category=r["category"], description=r["description"],
             occurred_at=_dt(r["occurred_at"]), created_at=_dt(r["created_at"]),
         )

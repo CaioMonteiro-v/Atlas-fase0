@@ -150,6 +150,43 @@ class MemoryService:
         cab = self.cabinet.snapshot(user_id)
         health = self.finance.health(user_id)
         memories = self.personal.list(user_id, limit=3)
+        alerts: list[dict] = []
+        if edu.revisoes_vencidas:
+            alerts.append({
+                "tipo": "estudos", "nivel": "info",
+                "texto": f"{edu.revisoes_vencidas} revisão(ões) vencida(s)",
+                "view": "education",
+            })
+        if cab.demandas_atrasadas:
+            alerts.append({
+                "tipo": "gabinete", "nivel": "warn",
+                "texto": f"{cab.demandas_atrasadas} demanda(s) atrasada(s)",
+                "view": "cabinet",
+            })
+        if cab.demandas_urgentes:
+            alerts.append({
+                "tipo": "gabinete", "nivel": "warn",
+                "texto": f"{cab.demandas_urgentes} demanda(s) urgente(s)",
+                "view": "cabinet",
+            })
+        if health.reserva_meses is not None and health.reserva_meses < 3:
+            alerts.append({
+                "tipo": "financas", "nivel": "warn",
+                "texto": f"Reserva baixa: {health.reserva_meses} mês(es)",
+                "view": "finance",
+            })
+        if health.taxa_poupanca < 0 and health.receita_mes > 0:
+            alerts.append({
+                "tipo": "financas", "nivel": "warn",
+                "texto": "Mês no vermelho (despesa > receita)",
+                "view": "finance",
+            })
+        if cab.proximo_compromisso:
+            alerts.append({
+                "tipo": "gabinete", "nivel": "info",
+                "texto": f"Próximo: {cab.proximo_compromisso.title}",
+                "view": "cabinet",
+            })
 
         return {
             "jornadas_ativas": len(active),
@@ -159,6 +196,7 @@ class MemoryService:
                 if active_j else None
             ),
             "proximo_passo": next_step,
+            "alertas": alerts,
             "memorias": len(self.personal.list(user_id, limit=10_000)),
             "memorias_recentes": [m.model_dump(mode="json") for m in memories],
             "conhecimento_nos": self.knowledge.count_nodes(user_id),
@@ -168,11 +206,18 @@ class MemoryService:
                 "minutos_semana": edu.minutos_semana,
                 "areas": edu.areas,
                 "competencias": len(edu.competencias),
+                "revisoes_vencidas": edu.revisoes_vencidas,
+                "capitulos_pendentes": edu.capitulos_pendentes,
             },
             "gabinete": {
                 "demandas_abertas": cab.demandas_abertas,
                 "demandas_urgentes": cab.demandas_urgentes,
+                "demandas_atrasadas": cab.demandas_atrasadas,
                 "municipios": cab.municipios,
+                "proximo_compromisso": (
+                    cab.proximo_compromisso.model_dump(mode="json")
+                    if cab.proximo_compromisso else None
+                ),
             },
         }
 

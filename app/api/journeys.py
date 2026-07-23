@@ -5,11 +5,12 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_ingestor, get_memory, get_planner
+from app.api.deps import get_ingestor, get_llm, get_memory, get_planner
 from app.ayra.orchestrator import JourneyPlanner
 from app.core.security import current_user_id
-from app.domain.models import Journey, JourneyCreate, JourneyStep
+from app.domain.models import Journey, JourneyCreate, JourneyStatusUpdate, JourneyStep
 from app.knowledge.ingest import DocumentIngestor
+from app.llm.base import LLM
 from app.memory.service import MemoryService
 
 router = APIRouter(tags=["jornadas"])
@@ -47,6 +48,19 @@ def get_journey(
     j = memory.journeys.get(user_id, journey_id)
     if not j:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "jornada não encontrada")
+    return {**j.model_dump(mode="json"), "progress": j.progress}
+
+
+@router.patch("/journeys/{journey_id}")
+def patch_journey(
+    journey_id: str,
+    body: JourneyStatusUpdate,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    if not memory.journeys.set_status(user_id, journey_id, body.status):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "jornada não encontrada")
+    j = memory.journeys.get(user_id, journey_id)
     return {**j.model_dump(mode="json"), "progress": j.progress}
 
 
@@ -141,22 +155,19 @@ async def ingest(
     file: UploadFile,
     user_id: str = Depends(current_user_id),
     ingestor: DocumentIngestor = Depends(get_ingestor),
+    llm: LLM = Depends(get_llm),
 ):
-    """202 Accepted: a ingestão roda em background.
-
-    Ingerir um PDF de 100 páginas leva minutos. Fazer isso dentro do request
-    garante timeout no proxy. O cliente recebe a confirmação na hora e consulta
-    o grafo depois.
-    """
-    from app.knowledge.extract import extract_text_from_bytes
+    """202 Accepted: a ingestão roda em background. PDF escaneado usa OCR."""
+    from app.knowledge.extract import extract_document
 
     raw = await file.read()
-    if len(raw) > 8_000_000:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "arquivo acima de 8 MB")
+    if len(raw) > 12_000_000:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "arquivo acima de 12 MB")
 
     title = file.filename or "documento"
+    ocr_fn = llm.ocr if hasattr(llm, "ocr") else None
     try:
-        text, fmt = extract_text_from_bytes(title, raw)
+        text, fmt = await extract_document(title, raw, ocr=ocr_fn)
     except ValueError as exc:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
 
@@ -168,6 +179,26 @@ async def ingest(
     )
     return {"status": "processando", "titulo": title, "formato": fmt, "caracteres": len(text)}
 
+
+@router.get("/knowledge/nodes")
+def list_nodes(
+    limit: int = 40,
+    node_type: str | None = None,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    nodes = memory.knowledge.list_nodes(user_id, limit=limit, node_type=node_type)
+    return [n.model_dump(mode="json") for n in nodes]
+
+
+@router.delete("/knowledge/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_node(
+    node_id: str,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    if not memory.knowledge.delete_node(user_id, node_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "nó não encontrado")
 
 
 @router.get("/knowledge/search")

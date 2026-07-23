@@ -78,8 +78,14 @@ Regra de dependência: **cada camada só importa a de baixo**. `memory/` não sa
   - Revisão espaçada (SM-2), plano semanal, progresso visual, simulado multi-capítulo
   - Material da trilha com OCR de PDF escaneado (Gemini)
 - **Domínio Financeiro**: contas, lançamentos, metas e saúde (Cap. 82–92)
+  - Relatório mensal por categoria, transferência real entre contas
+  - Consultoria com Ayra (`POST /finance/start-with-ayra`)
 - **Domínio Gabinete**: cidadãos, demandas, linha do tempo e agenda (Cap. 97–105)
+  - Dossiê do cidadão, agenda com status, atrasadas, assessoria Ayra
 - **Biblioteca com PDF** (`.txt`, `.md`, `.pdf` via pypdf + OCR)
+  - Lista de nós, vizinhos, apagar, OCR na ingestão
+- **Início acionável** — alertas (revisões, urgentes, reserva baixa, próximo compromisso)
+- **Jornadas** — pausar/concluir, definir objetivo real
 - **Dashboard, auditoria, export e wipe** na UI (Caps. 31 / 127)
 - Planejamento de jornada pela Ayra (`POST /journeys/{id}/plan`)
 
@@ -88,6 +94,7 @@ Regra de dependência: **cada camada só importa a de baixo**. `memory/` não sa
 1. Usar de verdade e ajustar o que a Ayra erra no dia a dia.
 2. Auth multi-usuário (JWT) quando sair do uso single-user.
 3. Postgres + pgvector quando o SQLite apertar.
+4. Orçamentos recorrentes / envelopes (finanças) se precisar.
 
 ## Decisões que valem defender
 

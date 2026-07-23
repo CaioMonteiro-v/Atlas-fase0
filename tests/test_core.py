@@ -237,6 +237,19 @@ def test_finance() -> None:
     check("despesa do mês", health.despesa_mes >= 200.0)
     check("snapshot monta contexto", fin.snapshot(U).contas[0].id == acc.id)
 
+    poup = fin.create_account(FinanceAccount(
+        user_id=U, name="Poupança", kind="poupanca", balance=0.0,
+    ))
+    fin.add_transaction(FinanceTransaction(
+        user_id=U, account_id=acc.id, to_account_id=poup.id,
+        kind="transferencia", amount=100.0, category="transferencia", description="reserva",
+    ))
+    check("transferência debita origem", abs(fin.get_account(U, acc.id).balance - 1200.0) < 0.01)
+    check("transferência credita destino", abs(fin.get_account(U, poup.id).balance - 100.0) < 0.01)
+    report = fin.monthly_report(U)
+    check("relatório mensal tem despesas", report["despesa"] >= 200.0)
+    check("relatório por categoria", any(c["categoria"] == "moradia" for c in report["por_categoria"]))
+
 
 def test_session_journey_bind() -> None:
     print("\n[7] Chat ↔ jornada")
@@ -353,6 +366,23 @@ def test_cabinet() -> None:
     check("snapshot conta abertas", snap.demandas_abertas >= 1)
     check("município no snapshot", "Sobral" in snap.municipios)
     check("timeline do cidadão", len(cab.list_timeline(U, citizen_id=cid.id)) >= 1)
+
+    from datetime import timedelta
+    from app.domain.models import CabinetAgendaItem, utcnow
+    late = cab.create_demand(CabinetDemand(
+        user_id=U, title="Atrasada", municipality="Sobral",
+        priority="alta", due_date=utcnow() - timedelta(days=2),
+    ))
+    check("demanda atrasada detectada", any(d.id == late.id for d in cab.overdue_demands(U)))
+    ag = cab.create_agenda(CabinetAgendaItem(
+        user_id=U, title="Visita", municipality="Sobral",
+        starts_at=utcnow() + timedelta(days=1),
+    ))
+    cab.update_agenda(U, ag.id, status="realizado")
+    check("agenda marcada realizada", cab.list_agenda(U)[0].status == "realizado" or
+          next(a for a in cab.list_agenda(U, limit=50) if a.id == ag.id).status == "realizado")
+    snap2 = cab.snapshot(U)
+    check("snapshot conta atrasadas", snap2.demandas_atrasadas >= 1)
 
 
 def test_education_chapters_quiz() -> None:

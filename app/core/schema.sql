@@ -253,16 +253,18 @@ CREATE TABLE IF NOT EXISTS finance_accounts (
 CREATE INDEX IF NOT EXISTS idx_fin_accounts_user ON finance_accounts (user_id);
 
 CREATE TABLE IF NOT EXISTS finance_transactions (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL,
-    account_id  TEXT NOT NULL,
-    kind        TEXT NOT NULL CHECK (kind IN ('receita', 'despesa', 'transferencia')),
-    amount      REAL NOT NULL CHECK (amount > 0),
-    category    TEXT NOT NULL DEFAULT 'geral',
-    description TEXT NOT NULL DEFAULT '',
-    occurred_at TEXT NOT NULL,
-    created_at  TEXT NOT NULL,
-    FOREIGN KEY (account_id) REFERENCES finance_accounts (id) ON DELETE CASCADE
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    account_id      TEXT NOT NULL,
+    to_account_id   TEXT,
+    kind            TEXT NOT NULL CHECK (kind IN ('receita', 'despesa', 'transferencia')),
+    amount          REAL NOT NULL CHECK (amount > 0),
+    category        TEXT NOT NULL DEFAULT 'geral',
+    description     TEXT NOT NULL DEFAULT '',
+    occurred_at     TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES finance_accounts (id) ON DELETE CASCADE,
+    FOREIGN KEY (to_account_id) REFERENCES finance_accounts (id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_fin_tx_user ON finance_transactions (user_id, occurred_at DESC);

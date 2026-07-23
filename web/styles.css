@@ -396,6 +396,24 @@ button:disabled { opacity: .45; cursor: default; }
   to { opacity: 1; transform: none; }
 }
 
+.home-alert {
+  display: block; width: 100%; text-align: left;
+  border: 1px solid var(--line); background: #fff;
+  border-radius: 12px; padding: 10px 12px; margin: 6px 0;
+  font: inherit; color: var(--ink); cursor: pointer;
+  transition: border-color .2s ease, transform .2s ease;
+}
+.home-alert:hover { border-color: var(--teal); transform: translateX(2px); }
+.home-alert.warn { border-color: rgba(163, 59, 45, 0.35); background: rgba(163, 59, 45, 0.06); }
+.alert-stack { margin-top: 4px; }
+.home-card.span-alerts { grid-column: 1 / -1; }
+.cat-bar {
+  display: grid; grid-template-columns: 110px 1fr auto;
+  gap: 10px; align-items: center; margin: 8px 0;
+  font-size: 0.85rem;
+}
+.row.is-overdue { border-color: rgba(163, 59, 45, 0.45); background: rgba(163, 59, 45, 0.05); }
+
 .detail-pane {
   background: rgba(255,255,255,0.72);
   border: 1px solid var(--line);

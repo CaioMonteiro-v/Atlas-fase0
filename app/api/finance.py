@@ -5,7 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_memory
+from app.api.deps import get_memory, get_planner
+from app.ayra.orchestrator import JourneyPlanner
 from app.core.security import current_user_id
 from app.domain.models import (
     FinanceAccount,
@@ -14,6 +15,11 @@ from app.domain.models import (
     FinanceGoalCreate,
     FinanceTransaction,
     FinanceTransactionCreate,
+    Journey,
+    PersonalMemory,
+    Privacy,
+    StartFinanceWithAyra,
+    new_id,
     utcnow,
 )
 from app.memory.service import MemoryService
@@ -41,6 +47,16 @@ def snapshot(
         {**g.model_dump(mode="json"), "progress": g.progress} for g in snap.metas
     ]
     return data
+
+
+@router.get("/report")
+def monthly_report(
+    month: str | None = None,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    """Fluxo do mês por categoria (receitas, despesas, poupança)."""
+    return memory.finance.monthly_report(user_id, month=month)
 
 
 # ------------------------------------------------------------------ contas
@@ -98,8 +114,18 @@ def create_transaction(
     try:
         memory.finance.add_transaction(tx)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return tx.model_dump(mode="json")
+
+
+@router.delete("/transactions/{tx_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_transaction(
+    tx_id: str,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    if not memory.finance.delete_transaction(user_id, tx_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "lançamento não encontrado")
 
 
 # ------------------------------------------------------------------- metas
@@ -148,3 +174,63 @@ def delete_goal(
 ):
     if not memory.finance.delete_goal(user_id, goal_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "meta não encontrada")
+
+
+# ---------------------------------------------------------- coach com Ayra
+@router.post("/start-with-ayra")
+async def start_with_ayra(
+    body: StartFinanceWithAyra,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+    planner: JourneyPlanner = Depends(get_planner),
+):
+    """Organizar finanças com a Ayra: jornada + sessão + mensagem inicial."""
+    focus_label = {
+        "organizar": "organizar o mês",
+        "reserva": "montar reserva de emergência",
+        "dividas": "sair das dívidas",
+        "investir": "começar a investir com segurança",
+        "orcamento": "fechar um orçamento realista",
+    }.get(body.focus, body.goal)
+
+    memory.personal.create(
+        PersonalMemory(
+            user_id=user_id,
+            category="objetivos",
+            content={"texto": f"Finanças: {body.goal}"},
+            privacy=Privacy.PRIVATE,
+            confidence=1.0,
+            tags=["financas", "mentoria"],
+        )
+    )
+
+    journey = memory.journeys.create(
+        Journey(
+            user_id=user_id,
+            domain="financas",
+            title=f"Finanças — {focus_label}",
+            stated_goal=body.goal,
+            status="descobrindo",
+        )
+    )
+    planned = await planner.plan(user_id, journey.id)
+    journey = planned or memory.journeys.get(user_id, journey.id)
+
+    session_id = new_id()
+    memory.conversation.ensure_session(user_id, session_id, journey_id=journey.id)
+    health = memory.finance.health(user_id)
+
+    return {
+        "journey": {**journey.model_dump(mode="json"), "progress": journey.progress},
+        "session_id": session_id,
+        "health": health.model_dump(mode="json"),
+        "mensagem_sugerida": (
+            f"Quero que você seja minha consultora financeira. Objetivo: {body.goal}. "
+            f"Foco: {focus_label}. "
+            f"Situação agora: patrimônio R$ {health.patrimonio:.2f}, "
+            f"receita do mês R$ {health.receita_mes:.2f}, despesa R$ {health.despesa_mes:.2f}, "
+            f"taxa de poupança {health.taxa_poupanca:.0%}, "
+            f"reserva {health.reserva_meses if health.reserva_meses is not None else 'n/d'} meses. "
+            "Diagnostique com clareza e proponha o próximo passo concreto."
+        ),
+    }

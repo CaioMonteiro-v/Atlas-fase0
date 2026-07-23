@@ -275,6 +275,17 @@ class KnowledgeStore:
             "SELECT COUNT(*) AS n FROM knowledge_nodes WHERE user_id = ?", (user_id,)
         ).fetchone()["n"]
 
+    def list_nodes(self, user_id: str, *, limit: int = 40, node_type: str | None = None) -> list[KnowledgeNode]:
+        sql = "SELECT * FROM knowledge_nodes WHERE user_id = ?"
+        params: list[Any] = [user_id]
+        if node_type:
+            sql += " AND node_type = ?"
+            params.append(node_type)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self.db.connect().execute(sql, params).fetchall()
+        return [self._to_node(r) for r in rows]
+
     def get_node(self, user_id: str, node_id: str) -> KnowledgeNode | None:
         r = self.db.connect().execute(
             "SELECT * FROM knowledge_nodes WHERE id = ? AND user_id = ?", (node_id, user_id)

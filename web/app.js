@@ -69,7 +69,7 @@ function setView(name) {
     finance: loadFinance,
     cabinet: loadCabinet,
     memory: loadMemory,
-    library: () => {},
+    library: loadLibrary,
   };
   loaders[name]?.();
 }
@@ -295,7 +295,14 @@ async function loadHome() {
   try {
     const d = await api("/memory/dashboard");
     const j = d.jornada_ativa;
+    const alerts = (d.alertas || []).map((a) =>
+      `<button type="button" class="home-alert ${a.nivel || ""}" data-view="${a.view || "home"}">${escapeHtml(a.texto)}</button>`
+    ).join("") || '<p class="muted">Nenhum alerta agora. Bom sinal.</p>';
     box.innerHTML = `
+      <div class="home-card span-alerts">
+        <h3>Atenção</h3>
+        <div class="alert-stack">${alerts}</div>
+      </div>
       <div class="home-card">
         <h3>Jornada ativa</h3>
         <b>${j ? escapeHtml(j.title) : "Nenhuma"}</b>
@@ -312,23 +319,24 @@ async function loadHome() {
       <div class="home-card">
         <h3>Estudos</h3>
         <b>${d.educacao?.trilhas_ativas ?? 0} trilhas</b>
-        <p>${d.educacao?.minutos_semana ?? 0} min/semana · ${(d.educacao?.areas || []).join(", ") || "qualquer área"}</p>
+        <p>${d.educacao?.revisoes_vencidas ?? 0} revisões · ${d.educacao?.minutos_semana ?? 0} min/semana</p>
       </div>
       <div class="home-card">
         <h3>Gabinete</h3>
         <b>${d.gabinete?.demandas_abertas ?? 0} abertas</b>
-        <p>${d.gabinete?.demandas_urgentes ?? 0} urgentes · ${(d.gabinete?.municipios || []).length} município(s)</p>
+        <p>${d.gabinete?.demandas_urgentes ?? 0} urgentes · ${d.gabinete?.demandas_atrasadas ?? 0} atrasadas</p>
       </div>
       <div class="home-card">
         <h3>Finanças</h3>
         <b>${money(d.financas.patrimonio)}</b>
-        <p>Poupança ${pct(d.financas.taxa_poupanca)} · ${d.financas.metas_ativas} meta(s)</p>
+        <p>Poupança ${pct(d.financas.taxa_poupanca)} · reserva ${d.financas.reserva_meses ?? "n/d"} m</p>
       </div>
       <div class="home-card">
         <h3>Memória</h3>
         <b>${d.memorias}</b>
         <p>${d.conhecimento_nos} nós no grafo</p>
       </div>`;
+    $$(".home-alert", box).forEach((btn) => btn.addEventListener("click", () => setView(btn.dataset.view)));
     $("#home-open-j")?.addEventListener("click", () => {
       state.selectedJourney = j.id;
       setView("journeys");
@@ -427,6 +435,9 @@ async function selectJourney(id) {
     <div class="actions" style="margin-bottom:16px">
       <button type="button" class="primary" id="btn-plan">Ayra, planejar</button>
       <button type="button" class="ghost" id="btn-talk-journey">Conversar nesta jornada</button>
+      <button type="button" class="ghost" id="btn-diagnose">Definir objetivo real</button>
+      <button type="button" class="ghost" id="btn-pause-j">Pausar</button>
+      <button type="button" class="ghost" id="btn-done-j">Concluir</button>
       <button type="button" class="ghost" id="btn-del-journey">Excluir</button>
     </div>
     <h3 class="section-title">Passos</h3>
@@ -446,6 +457,25 @@ async function selectJourney(id) {
     state.journeyId = id;
     setView("ayra");
     refreshJourneySelect();
+  });
+  $("#btn-diagnose")?.addEventListener("click", async () => {
+    const data = await openModal("Objetivo real", `
+      <label>O que você realmente quer?<textarea name="real_goal" rows="3" required
+        placeholder="Ex.: conseguir emprego, não só 'aprender Excel'">${escapeHtml(j.real_goal || "")}</textarea></label>`);
+    if (!data) return;
+    await api(`/journeys/${id}/diagnose`, {
+      method: "POST",
+      body: JSON.stringify({ real_goal: data.real_goal, diagnosis: { origem: "usuario" } }),
+    });
+    await selectJourney(id);
+  });
+  $("#btn-pause-j")?.addEventListener("click", async () => {
+    await api(`/journeys/${id}`, { method: "PATCH", body: JSON.stringify({ status: "pausada" }) });
+    await selectJourney(id);
+  });
+  $("#btn-done-j")?.addEventListener("click", async () => {
+    await api(`/journeys/${id}`, { method: "PATCH", body: JSON.stringify({ status: "concluida" }) });
+    await selectJourney(id);
   });
   $("#btn-del-journey")?.addEventListener("click", async () => {
     if (!confirm("Excluir esta jornada?")) return;
@@ -501,8 +531,19 @@ async function loadMemory() {
       <p>${escapeHtml(texto)}</p>
       <div class="meta"><span>${m.privacy}</span><span>confiança ${m.confidence}</span></div>
       <div class="actions" style="margin-top:10px">
+        <button type="button" class="ghost" data-edit="${m.id}">Editar</button>
         <button type="button" class="ghost" data-del="${m.id}">Remover</button>
       </div>`;
+    el.querySelector("[data-edit]").addEventListener("click", async () => {
+      const data = await openModal("Editar memória", `
+        <label>Conteúdo<textarea name="texto" rows="3" required>${escapeHtml(texto)}</textarea></label>`);
+      if (!data) return;
+      await api(`/memory/personal/${m.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ content: { texto: data.texto } }),
+      });
+      await loadMemory();
+    });
     el.querySelector("[data-del]").addEventListener("click", async () => {
       await api(`/memory/personal/${m.id}`, { method: "DELETE" });
       await loadMemory();
@@ -579,6 +620,45 @@ $("#btn-wipe").addEventListener("click", async () => {
 });
 
 // ---------- library ----------
+async function loadLibrary() {
+  const nodes = await api("/knowledge/nodes?limit=30");
+  const box = $("#library-recent");
+  box.innerHTML = "<h2 class='section-title'>Documentos recentes</h2>";
+  if (!nodes.length) {
+    box.insertAdjacentHTML("beforeend", '<p class="muted">Nada no grafo ainda. Ingera um arquivo acima.</p>');
+    return;
+  }
+  for (const n of nodes) {
+    const el = document.createElement("div");
+    el.className = "row";
+    el.innerHTML = `
+      <h3>${escapeHtml(n.title)}</h3>
+      <p>${escapeHtml((n.description || "").slice(0, 160))}</p>
+      <div class="meta"><span>${escapeHtml(n.node_type)}</span></div>
+      <div class="actions" style="margin-top:8px">
+        <button type="button" class="ghost" data-nei="${n.id}">Vizinhos</button>
+        <button type="button" class="ghost" data-del-n="${n.id}">Apagar</button>
+      </div>`;
+    el.querySelector("[data-nei]").addEventListener("click", () => showNeighbors(n.id));
+    el.querySelector("[data-del-n]").addEventListener("click", async () => {
+      if (!confirm("Apagar este nó do grafo?")) return;
+      await api(`/knowledge/${n.id}`, { method: "DELETE" });
+      await loadLibrary();
+    });
+    box.append(el);
+  }
+}
+
+async function showNeighbors(nodeId) {
+  const data = await api(`/knowledge/${nodeId}/neighbors`);
+  const panel = $("#library-neighbors");
+  panel.hidden = false;
+  const list = (data.neighbors || []).map((n) =>
+    `<div class="row" style="cursor:default"><h3>${escapeHtml(n.title)}</h3><p>${escapeHtml(n.node_type)}</p></div>`
+  ).join("") || '<p class="muted">Sem vizinhos.</p>';
+  panel.innerHTML = `<h2>Vizinhos de «${escapeHtml(data.node?.title || "")}»</h2>${list}`;
+}
+
 $("#ingest-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const file = $("#ingest-file").files[0];
@@ -598,6 +678,7 @@ $("#ingest-form").addEventListener("submit", async (e) => {
   $("#library-results").innerHTML = `<div class="row"><h3>Processando (${escapeHtml(data.formato || "arquivo")})</h3>
     <p>${escapeHtml(data.titulo)} — ${data.caracteres || "?"} caracteres. O grafo está sendo estruturado em background.</p></div>`;
   $("#ingest-file").value = "";
+  setTimeout(loadLibrary, 2500);
 });
 
 $("#search-form").addEventListener("submit", async (e) => {
@@ -614,22 +695,26 @@ $("#search-form").addEventListener("submit", async (e) => {
   for (const h of hits) {
     const el = document.createElement("div");
     el.className = "row";
-    el.style.cursor = "default";
     el.innerHTML = `
       <h3>${escapeHtml(h.titulo)}</h3>
       <p>${escapeHtml(h.descricao || "")}</p>
-      <div class="meta"><span>${h.tipo}</span><span>${h.match}</span><span>score ${h.score}</span></div>`;
+      <div class="meta"><span>${h.tipo}</span><span>${h.match}</span><span>score ${h.score}</span></div>
+      <div class="actions" style="margin-top:8px">
+        <button type="button" class="ghost" data-nei="${h.id}">Vizinhos</button>
+      </div>`;
+    el.querySelector("[data-nei]").addEventListener("click", () => showNeighbors(h.id));
     box.append(el);
   }
 });
 
 // ---------- finance ----------
 async function loadFinance() {
-  const [health, accounts, goals, txs] = await Promise.all([
+  const [health, accounts, goals, txs, report] = await Promise.all([
     api("/finance/health"),
     api("/finance/accounts"),
     api("/finance/goals"),
     api("/finance/transactions?limit=20"),
+    api("/finance/report"),
   ]);
 
   $("#finance-health").innerHTML = [
@@ -641,6 +726,16 @@ async function loadFinance() {
     ["Metas", `${health.metas_ativas} · ${pct(health.progresso_metas)}`],
   ].map(([k, v]) => `<div class="stat"><span>${k}</span><b>${v}</b></div>`).join("");
 
+  const cats = (report.por_categoria || []).map((c) =>
+    `<div class="cat-bar"><span>${escapeHtml(c.categoria)}</span>
+      <div class="progress is-thick"><span style="width:${c.pct || 0}%"></span></div>
+      <b>${money(c.total)}</b></div>`
+  ).join("") || '<p class="muted">Sem despesas categorizadas neste mês.</p>';
+  $("#finance-report").innerHTML = `
+    <h2>Fluxo de ${escapeHtml(report.month)}</h2>
+    <p class="muted">Receita ${money(report.receita)} · Despesa ${money(report.despesa)} · Poupança ${money(report.poupanca)} · ${report.lancamentos} lançamentos</p>
+    ${cats}`;
+
   const accBox = $("#finance-accounts");
   accBox.innerHTML = accounts.length ? "" : '<p class="muted">Crie uma conta para começar.</p>';
   for (const a of accounts) {
@@ -650,7 +745,13 @@ async function loadFinance() {
     el.innerHTML = `
       <h3>${escapeHtml(a.name)}</h3>
       <p>${escapeHtml(a.kind)} · ${a.currency}</p>
-      <div class="meta"><b>${money(a.balance)}</b></div>`;
+      <div class="meta"><b>${money(a.balance)}</b>
+        <button type="button" class="ghost" data-del-acc="${a.id}">Apagar</button></div>`;
+    el.querySelector("[data-del-acc]").addEventListener("click", async () => {
+      if (!confirm("Apagar conta e lançamentos?")) return;
+      await api(`/finance/accounts/${a.id}`, { method: "DELETE" });
+      await loadFinance();
+    });
     accBox.append(el);
   }
 
@@ -666,6 +767,7 @@ async function loadFinance() {
       <div class="progress"><span style="width:${(g.progress || 0) * 100}%"></span></div>
       <div class="actions" style="margin-top:10px">
         <button type="button" class="ghost" data-goal="${g.id}">Atualizar</button>
+        <button type="button" class="ghost" data-del-goal="${g.id}">Apagar</button>
       </div>`;
     el.querySelector("[data-goal]").addEventListener("click", async () => {
       const data = await openModal("Progresso da meta", `
@@ -675,6 +777,10 @@ async function loadFinance() {
         method: "PATCH",
         body: JSON.stringify({ current_amount: Number(data.current_amount) }),
       });
+      await loadFinance();
+    });
+    el.querySelector("[data-del-goal]").addEventListener("click", async () => {
+      await api(`/finance/goals/${g.id}`, { method: "DELETE" });
       await loadFinance();
     });
     goalBox.append(el);
@@ -690,11 +796,42 @@ async function loadFinance() {
     const sign = t.kind === "receita" ? "+" : "−";
     el.innerHTML = `
       <h3>${escapeHtml(t.description || t.category)}</h3>
-      <p>${escapeHtml(t.kind)} · ${escapeHtml(t.category)}</p>
-      <div class="meta"><span class="${cls}">${sign} ${money(t.amount)}</span></div>`;
+      <p>${escapeHtml(t.kind)} · ${escapeHtml(t.category)}${t.to_account_id ? " · transferência" : ""}</p>
+      <div class="meta"><span class="${cls}">${sign} ${money(t.amount)}</span>
+        <button type="button" class="ghost" data-del-tx="${t.id}">Apagar</button></div>`;
+    el.querySelector("[data-del-tx]").addEventListener("click", async () => {
+      await api(`/finance/transactions/${t.id}`, { method: "DELETE" });
+      await loadFinance();
+    });
     txBox.append(el);
   }
 }
+
+$("#btn-fin-ayra")?.addEventListener("click", async () => {
+  const data = await openModal("Consultoria financeira com a Ayra", `
+    <label>Objetivo<textarea name="goal" rows="2" required placeholder="Quero montar reserva / sair do vermelho…"></textarea></label>
+    <label>Foco
+      <select name="focus">
+        <option value="organizar">organizar</option>
+        <option value="reserva">reserva</option>
+        <option value="dividas">dívidas</option>
+        <option value="investir">investir</option>
+        <option value="orcamento">orçamento</option>
+      </select>
+    </label>`);
+  if (!data) return;
+  const res = await api("/finance/start-with-ayra", {
+    method: "POST",
+    body: JSON.stringify({ goal: data.goal, focus: data.focus }),
+  });
+  state.sessionId = res.session_id;
+  state.journeyId = res.journey.id;
+  sess.textContent = `sessão ${res.session_id.slice(0, 8)}`;
+  setView("ayra");
+  await refreshJourneySelect();
+  journeySelect.value = res.journey.id;
+  await sendChat(res.mensagem_sugerida, { clearInput: false });
+});
 
 $("#btn-add-account").addEventListener("click", async () => {
   const data = await openModal("Nova conta", `
@@ -730,28 +867,34 @@ $("#btn-add-tx").addEventListener("click", async () => {
   }
   const options = accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
   const data = await openModal("Novo lançamento", `
-    <label>Conta<select name="account_id">${options}</select></label>
+    <label>Conta (origem)<select name="account_id">${options}</select></label>
     <label>Tipo
-      <select name="kind">
+      <select name="kind" id="tx-kind">
         <option value="despesa">despesa</option>
         <option value="receita">receita</option>
         <option value="transferencia">transferencia</option>
       </select>
     </label>
+    <label>Destino (só transferência)<select name="to_account_id"><option value="">—</option>${options}</select></label>
     <label>Valor<input name="amount" type="number" min="0.01" step="0.01" required></label>
-    <label>Categoria<input name="category" value="geral"></label>
+    <label>Categoria<input name="category" value="geral" placeholder="moradia, mercado, salario…"></label>
     <label>Descrição<input name="description" placeholder="Mercado, salário…"></label>`);
   if (!data) return;
-  await api("/finance/transactions", {
-    method: "POST",
-    body: JSON.stringify({
-      account_id: data.account_id,
-      kind: data.kind,
-      amount: Number(data.amount),
-      category: data.category || "geral",
-      description: data.description || "",
-    }),
-  });
+  const payload = {
+    account_id: data.account_id,
+    kind: data.kind,
+    amount: Number(data.amount),
+    category: data.category || "geral",
+    description: data.description || "",
+  };
+  if (data.kind === "transferencia") {
+    if (!data.to_account_id) {
+      alert("Escolha a conta destino.");
+      return;
+    }
+    payload.to_account_id = data.to_account_id;
+  }
+  await api("/finance/transactions", { method: "POST", body: JSON.stringify(payload) });
   await loadFinance();
 });
 
@@ -759,16 +902,16 @@ $("#btn-add-goal").addEventListener("click", async () => {
   const data = await openModal("Nova meta financeira", `
     <label>Título<input name="title" required placeholder="Reserva de emergência"></label>
     <label>Valor alvo (R$)<input name="target_amount" type="number" min="0.01" step="0.01" required></label>
-    <label>Já juntado (R$)<input name="current_amount" type="number" min="0" step="0.01" value="0"></label>`);
+    <label>Já juntado (R$)<input name="current_amount" type="number" min="0" step="0.01" value="0"></label>
+    <label>Prazo<input name="deadline" type="date"></label>`);
   if (!data) return;
-  await api("/finance/goals", {
-    method: "POST",
-    body: JSON.stringify({
-      title: data.title,
-      target_amount: Number(data.target_amount),
-      current_amount: Number(data.current_amount || 0),
-    }),
-  });
+  const body = {
+    title: data.title,
+    target_amount: Number(data.target_amount),
+    current_amount: Number(data.current_amount || 0),
+  };
+  if (data.deadline) body.deadline = new Date(data.deadline).toISOString();
+  await api("/finance/goals", { method: "POST", body: JSON.stringify(body) });
   await loadFinance();
 });
 
@@ -1172,31 +1315,36 @@ $("#btn-add-note").addEventListener("click", async () => {
 
 // ---------- cabinet ----------
 async function loadCabinet() {
-  const [snap, demands, citizens, timeline] = await Promise.all([
+  const statusFilter = $("#cab-filter-status")?.value || "";
+  const demandQs = statusFilter ? `?status_filter=${encodeURIComponent(statusFilter)}` : "";
+  const [snap, demands, citizens, timeline, agenda] = await Promise.all([
     api("/cabinet/snapshot"),
-    api("/cabinet/demands"),
+    api(`/cabinet/demands${demandQs}`),
     api("/cabinet/citizens"),
     api("/cabinet/timeline?limit=20"),
+    api("/cabinet/agenda"),
   ]);
   $("#cab-summary").innerHTML = [
     ["Abertas", snap.demandas_abertas],
     ["Urgentes", snap.demandas_urgentes],
-    ["Municípios", (snap.municipios || []).length],
+    ["Atrasadas", snap.demandas_atrasadas ?? 0],
     ["Agenda", (snap.agenda || []).length],
   ].map(([k, v]) => `<div class="stat"><span>${k}</span><b>${v}</b></div>`).join("");
 
   const dBox = $("#cab-demands");
   dBox.innerHTML = demands.length ? "" : '<p class="muted">Nenhuma demanda.</p>';
   for (const d of demands) {
+    const overdue = d.due_date && new Date(d.due_date) < new Date() && !["concluida", "arquivada"].includes(d.status);
     const el = document.createElement("div");
-    el.className = "row";
+    el.className = "row" + (overdue ? " is-overdue" : "");
     el.style.cursor = "default";
     el.innerHTML = `
       <h3>${escapeHtml(d.title)}</h3>
       <p>${escapeHtml(d.municipality || "s/ município")} · ${escapeHtml(d.category)}</p>
-      <div class="meta"><span>${d.priority}</span><span>${d.status}</span></div>
+      <div class="meta"><span>${d.priority}</span><span>${d.status}</span>${overdue ? "<span>atrasada</span>" : ""}</div>
       <div class="actions" style="margin-top:8px">
         <button type="button" class="ghost" data-demand="${d.id}">Andamento</button>
+        <button type="button" class="ghost" data-del-d="${d.id}">Apagar</button>
       </div>`;
     el.querySelector("[data-demand]").addEventListener("click", async () => {
       const data = await openModal("Atualizar demanda", `
@@ -1217,6 +1365,10 @@ async function loadCabinet() {
       });
       await loadCabinet();
     });
+    el.querySelector("[data-del-d]").addEventListener("click", async () => {
+      await api(`/cabinet/demands/${d.id}`, { method: "DELETE" });
+      await loadCabinet();
+    });
     dBox.append(el);
   }
 
@@ -1225,11 +1377,45 @@ async function loadCabinet() {
   for (const c of citizens) {
     const el = document.createElement("div");
     el.className = "row";
-    el.style.cursor = "default";
     el.innerHTML = `
       <h3>${escapeHtml(c.name)}</h3>
-      <p>${escapeHtml(c.municipality || "—")} · ${escapeHtml(c.contact || "")}</p>`;
+      <p>${escapeHtml(c.municipality || "—")} · ${escapeHtml(c.contact || "")}</p>
+      <div class="actions" style="margin-top:8px">
+        <button type="button" class="ghost" data-dos="${c.id}">Dossiê</button>
+        <button type="button" class="ghost" data-del-c="${c.id}">Apagar</button>
+      </div>`;
+    el.querySelector("[data-dos]").addEventListener("click", () => openCitizenDossier(c.id));
+    el.querySelector("[data-del-c]").addEventListener("click", async () => {
+      await api(`/cabinet/citizens/${c.id}`, { method: "DELETE" });
+      await loadCabinet();
+    });
     cBox.append(el);
+  }
+
+  const aBox = $("#cab-agenda");
+  aBox.innerHTML = agenda.length ? "" : '<p class="muted">Agenda vazia.</p>';
+  for (const a of agenda) {
+    const el = document.createElement("div");
+    el.className = "row";
+    el.style.cursor = "default";
+    const when = a.starts_at ? new Date(a.starts_at).toLocaleString("pt-BR") : "—";
+    el.innerHTML = `
+      <h3>${escapeHtml(a.title)}</h3>
+      <p>${escapeHtml(when)} · ${escapeHtml(a.municipality || "")}</p>
+      <div class="meta"><span>${a.status}</span></div>
+      <div class="actions" style="margin-top:8px">
+        <button type="button" class="ghost" data-ag-done="${a.id}">Realizado</button>
+        <button type="button" class="ghost" data-ag-cancel="${a.id}">Cancelar</button>
+      </div>`;
+    el.querySelector("[data-ag-done]").addEventListener("click", async () => {
+      await api(`/cabinet/agenda/${a.id}`, { method: "PATCH", body: JSON.stringify({ status: "realizado" }) });
+      await loadCabinet();
+    });
+    el.querySelector("[data-ag-cancel]").addEventListener("click", async () => {
+      await api(`/cabinet/agenda/${a.id}`, { method: "PATCH", body: JSON.stringify({ status: "cancelado" }) });
+      await loadCabinet();
+    });
+    aBox.append(el);
   }
 
   const tBox = $("#cab-timeline");
@@ -1245,6 +1431,42 @@ async function loadCabinet() {
     tBox.append(el);
   }
 }
+
+async function openCitizenDossier(citizenId) {
+  const data = await api(`/cabinet/citizens/${citizenId}`);
+  const wrap = $("#cab-dossier-wrap");
+  const box = $("#cab-dossier");
+  wrap.hidden = false;
+  const c = data.citizen;
+  const dem = (data.demands || []).map((d) => `<li>${escapeHtml(d.title)} · ${d.status}</li>`).join("") || "<li>sem demandas</li>";
+  const tl = (data.timeline || []).slice(0, 8).map((e) => `<li>${escapeHtml(e.title)}</li>`).join("") || "<li>sem eventos</li>";
+  box.innerHTML = `
+    <h3>${escapeHtml(c.name)}</h3>
+    <p class="muted">${escapeHtml(c.municipality || "")} · ${escapeHtml(c.contact || "")}</p>
+    <p>${escapeHtml(c.notes || "")}</p>
+    <h4>Demandas</h4><ul>${dem}</ul>
+    <h4>Timeline</h4><ul>${tl}</ul>`;
+}
+
+$("#cab-filter-status")?.addEventListener("change", () => loadCabinet());
+
+$("#btn-cab-ayra")?.addEventListener("click", async () => {
+  const data = await openModal("Assessoria de gabinete com a Ayra", `
+    <label>Assunto<textarea name="topic" rows="2" required placeholder="Priorizar demandas de Sobral / ofício X…"></textarea></label>
+    <label>Município<input name="municipality" placeholder="opcional"></label>`);
+  if (!data) return;
+  const res = await api("/cabinet/start-with-ayra", {
+    method: "POST",
+    body: JSON.stringify({ topic: data.topic, municipality: data.municipality || "" }),
+  });
+  state.sessionId = res.session_id;
+  state.journeyId = res.journey.id;
+  sess.textContent = `sessão ${res.session_id.slice(0, 8)}`;
+  setView("ayra");
+  await refreshJourneySelect();
+  journeySelect.value = res.journey.id;
+  await sendChat(res.mensagem_sugerida, { clearInput: false });
+});
 
 $("#btn-add-citizen").addEventListener("click", async () => {
   const data = await openModal("Novo cidadão", `
@@ -1274,19 +1496,19 @@ $("#btn-add-demand").addEventListener("click", async () => {
         <option value="urgente">urgente</option>
       </select>
     </label>
+    <label>Prazo<input name="due_date" type="date"></label>
     <label>Cidadão<select name="citizen_id">${opts}</select></label>`);
   if (!data) return;
-  await api("/cabinet/demands", {
-    method: "POST",
-    body: JSON.stringify({
-      title: data.title,
-      subject: data.subject || "",
-      municipality: data.municipality || "",
-      category: data.category || "geral",
-      priority: data.priority,
-      citizen_id: data.citizen_id || null,
-    }),
-  });
+  const body = {
+    title: data.title,
+    subject: data.subject || "",
+    municipality: data.municipality || "",
+    category: data.category || "geral",
+    priority: data.priority,
+    citizen_id: data.citizen_id || null,
+  };
+  if (data.due_date) body.due_date = new Date(data.due_date).toISOString();
+  await api("/cabinet/demands", { method: "POST", body: JSON.stringify(body) });
   await loadCabinet();
 });
 

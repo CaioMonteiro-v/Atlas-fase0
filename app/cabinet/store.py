@@ -133,6 +133,33 @@ class CabinetStore:
                 return None
         return self.get_demand(user_id, demand_id)
 
+    def delete_demand(self, user_id: str, demand_id: str) -> bool:
+        with self.db.tx() as c:
+            cur = c.execute(
+                "DELETE FROM cabinet_demands WHERE id = ? AND user_id = ?",
+                (demand_id, user_id),
+            )
+            return cur.rowcount > 0
+
+    def delete_citizen(self, user_id: str, citizen_id: str) -> bool:
+        with self.db.tx() as c:
+            cur = c.execute(
+                "DELETE FROM cabinet_citizens WHERE id = ? AND user_id = ?",
+                (citizen_id, user_id),
+            )
+            return cur.rowcount > 0
+
+    def overdue_demands(self, user_id: str) -> list[CabinetDemand]:
+        now = utcnow()
+        open_statuses = {"aberta", "em_andamento", "aguardando"}
+        out = []
+        for d in self.list_demands(user_id, limit=200):
+            if d.status not in open_statuses:
+                continue
+            if d.due_date and d.due_date < now:
+                out.append(d)
+        return out
+
     # --------------------------------------------------------------- timeline
     def add_timeline(self, event: CabinetTimelineEvent) -> CabinetTimelineEvent:
         with self.db.tx() as c:
@@ -186,6 +213,22 @@ class CabinetStore:
         ).fetchall()
         return [self._to_agenda(r) for r in rows]
 
+    def update_agenda(
+        self, user_id: str, item_id: str, *, status: str | None = None, notes: str | None = None
+    ) -> CabinetAgendaItem | None:
+        current = next((a for a in self.list_agenda(user_id, limit=200) if a.id == item_id), None)
+        if not current:
+            return None
+        new_status = status or current.status
+        new_notes = notes if notes is not None else current.notes
+        with self.db.tx() as c:
+            c.execute(
+                """UPDATE cabinet_agenda SET status = ?, notes = ?, updated_at = ?
+                   WHERE id = ? AND user_id = ?""",
+                (new_status, new_notes, _iso(utcnow()), item_id, user_id),
+            )
+        return next((a for a in self.list_agenda(user_id, limit=200) if a.id == item_id), None)
+
     # -------------------------------------------------------------- snapshot
     def snapshot(self, user_id: str) -> CabinetSnapshot:
         open_statuses = ("aberta", "em_andamento", "aguardando")
@@ -193,15 +236,19 @@ class CabinetStore:
         for st in open_statuses:
             all_open.extend(self.list_demands(user_id, status=st, limit=100))
         urgentes = [d for d in all_open if d.priority in {"alta", "urgente"}]
+        atrasadas = self.overdue_demands(user_id)
         municipios = sorted({d.municipality for d in all_open if d.municipality})
         recentes = sorted(all_open, key=lambda d: d.updated_at or utcnow(), reverse=True)[:8]
-        agenda = [a for a in self.list_agenda(user_id, limit=10) if a.status == "agendado"]
+        agenda = [a for a in self.list_agenda(user_id, limit=20) if a.status == "agendado"]
+        proximo = agenda[0] if agenda else None
         return CabinetSnapshot(
             demandas_abertas=len(all_open),
             demandas_urgentes=len(urgentes),
+            demandas_atrasadas=len(atrasadas),
             municipios=municipios,
             recentes=recentes,
             agenda=agenda,
+            proximo_compromisso=proximo,
         )
 
     # ---------------------------------------------------------------- helpers

@@ -208,12 +208,14 @@
         <input type="file" id="ingest-file" accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf" required>
         <button type="submit" class="primary">Ingerir</button>
       </form>
-      <p class="muted">Aceita .txt, .md e .pdf (texto extraível).</p>
+      <p class="muted">Aceita .txt, .md e .pdf (incluindo escaneado com OCR).</p>
       <form id="search-form" class="inline-form">
         <input type="search" id="search-q" placeholder="Buscar no grafo…" required>
         <button type="submit" class="ghost">Buscar</button>
       </form>
+      <div id="library-recent" class="list-stack wide"></div>
       <div id="library-results" class="list-stack wide"></div>
+      <div id="library-neighbors" class="edu-panel" hidden></div>
     </section>
 
     <!-- GABINETE -->
@@ -224,6 +226,7 @@
           <h1>Gabinete</h1>
         </div>
         <div class="actions">
+          <button type="button" class="ghost" id="btn-cab-ayra">Assessoria Ayra</button>
           <button type="button" class="ghost" id="btn-add-citizen">Cidadão</button>
           <button type="button" class="ghost" id="btn-add-agenda">Agenda</button>
           <button type="button" class="primary" id="btn-add-demand">Demanda</button>
@@ -233,15 +236,32 @@
       <div class="finance-grid">
         <div>
           <h2 class="section-title">Demandas</h2>
+          <div class="inline-form" style="margin-bottom:8px">
+            <select id="cab-filter-status">
+              <option value="">todos status</option>
+              <option value="aberta">aberta</option>
+              <option value="em_andamento">em_andamento</option>
+              <option value="aguardando">aguardando</option>
+              <option value="concluida">concluida</option>
+            </select>
+          </div>
           <div id="cab-demands" class="list-stack"></div>
         </div>
         <div>
           <h2 class="section-title">Cidadãos</h2>
           <div id="cab-citizens" class="list-stack"></div>
         </div>
-        <div class="span-2">
+        <div>
+          <h2 class="section-title">Agenda</h2>
+          <div id="cab-agenda" class="list-stack"></div>
+        </div>
+        <div>
           <h2 class="section-title">Linha do tempo</h2>
           <div id="cab-timeline" class="list-stack"></div>
+        </div>
+        <div class="span-2" id="cab-dossier-wrap" hidden>
+          <h2 class="section-title">Dossiê do cidadão</h2>
+          <div id="cab-dossier" class="edu-panel"></div>
         </div>
       </div>
     </section>
@@ -254,12 +274,14 @@
           <h1>Finanças</h1>
         </div>
         <div class="actions">
+          <button type="button" class="ghost" id="btn-fin-ayra">Consultoria Ayra</button>
           <button type="button" class="ghost" id="btn-add-account">Conta</button>
           <button type="button" class="ghost" id="btn-add-tx">Lançamento</button>
           <button type="button" class="primary" id="btn-add-goal">Meta</button>
         </div>
       </header>
       <div id="finance-health" class="health-strip"></div>
+      <div id="finance-report" class="edu-panel"></div>
       <div class="finance-grid">
         <div>
           <h2 class="section-title">Contas</h2>
