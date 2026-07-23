@@ -24,9 +24,11 @@
       <button type="button" class="nav-item is-active" data-view="home">Início</button>
       <button type="button" class="nav-item" data-view="ayra">Ayra</button>
       <button type="button" class="nav-item" data-view="journeys">Jornadas</button>
+      <button type="button" class="nav-item" data-view="education">Estudos</button>
+      <button type="button" class="nav-item" data-view="finance">Finanças</button>
+      <button type="button" class="nav-item" data-view="cabinet">Gabinete</button>
       <button type="button" class="nav-item" data-view="memory">Memória</button>
       <button type="button" class="nav-item" data-view="library">Biblioteca</button>
-      <button type="button" class="nav-item" data-view="finance">Finanças</button>
     </nav>
 
     <div class="rail-foot">
@@ -53,7 +55,7 @@
                  placeholder="Ex.: quero organizar minhas finanças / aprender inglês / passar em concurso">
           <select id="onboard-domain" name="domain">
             <option value="geral">Geral</option>
-            <option value="educacao">Educação</option>
+            <option value="educacao">Estudos</option>
             <option value="financas">Finanças</option>
             <option value="gabinete">Gabinete</option>
           </select>
@@ -94,6 +96,36 @@
           <div id="fontes"><p class="muted">As fontes de cada resposta aparecem aqui.</p></div>
           <div id="journey-chip" class="journey-chip" hidden></div>
         </aside>
+      </div>
+    </section>
+
+    <!-- ESTUDOS -->
+    <section class="view" id="view-education" data-view-panel="education" hidden>
+      <header class="view-head">
+        <div>
+          <p class="eyebrow">Domínio Educação — qualquer área</p>
+          <h1>Estudos</h1>
+        </div>
+        <div class="actions">
+          <button type="button" class="ghost" id="btn-add-session">Registrar estudo</button>
+          <button type="button" class="ghost" id="btn-add-comp">Competência</button>
+          <button type="button" class="primary" id="btn-add-track">Nova trilha</button>
+        </div>
+      </header>
+      <div id="edu-summary" class="health-strip"></div>
+      <div class="finance-grid">
+        <div>
+          <h2 class="section-title">Trilhas ativas</h2>
+          <div id="edu-tracks" class="list-stack"></div>
+        </div>
+        <div>
+          <h2 class="section-title">Competências</h2>
+          <div id="edu-comps" class="list-stack"></div>
+        </div>
+        <div class="span-2">
+          <h2 class="section-title">Sessões recentes</h2>
+          <div id="edu-sessions" class="list-stack"></div>
+        </div>
       </div>
     </section>
 
@@ -153,6 +185,36 @@
         <button type="submit" class="ghost">Buscar</button>
       </form>
       <div id="library-results" class="list-stack wide"></div>
+    </section>
+
+    <!-- GABINETE -->
+    <section class="view" id="view-cabinet" data-view-panel="cabinet" hidden>
+      <header class="view-head">
+        <div>
+          <p class="eyebrow">Domínio Governamental</p>
+          <h1>Gabinete</h1>
+        </div>
+        <div class="actions">
+          <button type="button" class="ghost" id="btn-add-citizen">Cidadão</button>
+          <button type="button" class="ghost" id="btn-add-agenda">Agenda</button>
+          <button type="button" class="primary" id="btn-add-demand">Demanda</button>
+        </div>
+      </header>
+      <div id="cab-summary" class="health-strip"></div>
+      <div class="finance-grid">
+        <div>
+          <h2 class="section-title">Demandas</h2>
+          <div id="cab-demands" class="list-stack"></div>
+        </div>
+        <div>
+          <h2 class="section-title">Cidadãos</h2>
+          <div id="cab-citizens" class="list-stack"></div>
+        </div>
+        <div class="span-2">
+          <h2 class="section-title">Linha do tempo</h2>
+          <div id="cab-timeline" class="list-stack"></div>
+        </div>
+      </div>
     </section>
 
     <!-- FINANÇAS -->

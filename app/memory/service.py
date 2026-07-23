@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import logging
 
+from app.cabinet.store import CabinetStore
 from app.core.db import Database
 from app.domain.models import AyraContext
+from app.education.store import EducationStore
 from app.finance.store import FinanceStore
 from app.llm.base import LLM
 from app.memory.store import (
@@ -32,6 +34,20 @@ _FINANCE_HINTS = (
     "gast", "conta banc", "fluxo de caixa",
 )
 
+_EDU_HINTS = (
+    "estud", "aprend", "aula", "matéria", "materia", "prova", "concurso",
+    "trilha", "competên", "competen", "exercício", "exercicio", "revisar",
+    "matemática", "matematica", "física", "fisica", "direito", "medicina",
+    "program", "python", "história", "historia", "idioma", "inglês", "ingles",
+    "química", "quimica", "biologia", "filosofia",
+)
+
+_CABINET_HINTS = (
+    "gabinete", "demanda", "município", "municipio", "vereador", "prefeito",
+    "parlamentar", "cidadão", "cidadao", "ofício", "oficio", "agenda",
+    "mandato", "liderança", "lideranca", "convênio", "convenio", "assessoria",
+)
+
 
 class MemoryService:
     def __init__(self, db: Database, llm: LLM) -> None:
@@ -42,6 +58,8 @@ class MemoryService:
         self.knowledge = KnowledgeStore(db)
         self.journeys = JourneyStore(db)
         self.finance = FinanceStore(db)
+        self.education = EducationStore(db)
+        self.cabinet = CabinetStore(db)
         self.audit = AuditStore(db)
 
     async def build_context(
@@ -55,22 +73,14 @@ class MemoryService:
     ) -> AyraContext:
         history = self.conversation.history(user_id, session_id, limit=history_turns)
 
-        # Preferência: jornada explícita da conversa > sessão amarrada > jornada ativa.
         session = self.conversation.get_session(user_id, session_id)
         jid = journey_id or (session.journey_id if session else None)
         journey = self.journeys.get(user_id, jid) if jid else self.journeys.active(user_id)
 
-        # Memória pessoal: as categorias que quase sempre importam. Mandar TUDO
-        # para o modelo é o erro clássico — enche a janela e piora a resposta.
         personal = []
         for cat in ("objetivos", "preferencias", "restricoes", "contexto", "rotina"):
             personal += self.personal.list(user_id, category=cat, limit=4)
 
-        # Conhecimento: busca híbrida.
-        #
-        # Se o grafo está vazio, embutir a pergunta é jogar uma chamada de API
-        # fora — não há nada com que comparar o vetor. Este é o caso enquanto
-        # você não ingeriu nenhum documento, ou seja: sempre, no começo.
         hits = []
         if self.knowledge.count_nodes(user_id) > 0:
             query_vec = None
@@ -86,17 +96,31 @@ class MemoryService:
                 user_id, question, query_embedding=query_vec, model=model, top_k=knowledge_hits
             )
 
-        # Finanças: só injeta quando a pergunta (ou a jornada ativa) pede.
-        # Evita poluir o contexto de uma conversa sobre Excel com o extrato.
-        finance = None
         q = question.lower()
-        wants_finance = any(h in q for h in _FINANCE_HINTS) or (
-            journey is not None and journey.domain == "financas"
-        )
-        if wants_finance and self.finance.list_accounts(user_id):
-            finance = self.finance.snapshot(user_id)
-            self.audit.log(user_id, "read", "finance_snapshot", "snapshot",
-                           session_id, "contexto financeiro")
+        domain = journey.domain if journey else None
+
+        finance = None
+        if any(h in q for h in _FINANCE_HINTS) or domain == "financas":
+            if self.finance.list_accounts(user_id):
+                finance = self.finance.snapshot(user_id)
+                self.audit.log(user_id, "read", "finance_snapshot", "snapshot",
+                               session_id, "contexto financeiro")
+
+        education = None
+        if any(h in q for h in _EDU_HINTS) or domain == "educacao":
+            snap = self.education.snapshot(user_id)
+            if snap.tracks_ativas or snap.competencias:
+                education = snap
+                self.audit.log(user_id, "read", "education_snapshot", "snapshot",
+                               session_id, "contexto educacional")
+
+        cabinet = None
+        if any(h in q for h in _CABINET_HINTS) or domain == "gabinete":
+            snap = self.cabinet.snapshot(user_id)
+            if snap.demandas_abertas or snap.agenda or snap.municipios:
+                cabinet = snap
+                self.audit.log(user_id, "read", "cabinet_snapshot", "snapshot",
+                               session_id, "contexto de gabinete")
 
         for m in personal:
             self.audit.log(user_id, "read", "personal_memory", m.id, session_id, "contexto da resposta")
@@ -107,11 +131,10 @@ class MemoryService:
 
         return AyraContext(
             personal=personal, knowledge=hits, journey=journey,
-            finance=finance, history=history,
+            finance=finance, education=education, cabinet=cabinet, history=history,
         )
 
     def dashboard(self, user_id: str) -> dict:
-        """Resumo da home: progresso, próximo passo, saúde financeira."""
         journeys = self.journeys.list(user_id)
         active = [j for j in journeys if j.status == "ativa"]
         active_j = active[0] if active else None
@@ -122,32 +145,40 @@ class MemoryService:
                     next_step = {"id": s.id, "title": s.title, "journey_id": active_j.id}
                     break
 
+        edu = self.education.snapshot(user_id)
+        cab = self.cabinet.snapshot(user_id)
         health = self.finance.health(user_id)
         memories = self.personal.list(user_id, limit=3)
-        nodes = self.knowledge.count_nodes(user_id)
 
         return {
             "jornadas_ativas": len(active),
             "jornadas_total": len(journeys),
             "jornada_ativa": (
-                {
-                    **active_j.model_dump(mode="json"),
-                    "progress": active_j.progress,
-                }
+                {**active_j.model_dump(mode="json"), "progress": active_j.progress}
                 if active_j else None
             ),
             "proximo_passo": next_step,
             "memorias": len(self.personal.list(user_id, limit=10_000)),
             "memorias_recentes": [m.model_dump(mode="json") for m in memories],
-            "conhecimento_nos": nodes,
+            "conhecimento_nos": self.knowledge.count_nodes(user_id),
             "financas": health.model_dump(mode="json"),
+            "educacao": {
+                "trilhas_ativas": len(edu.tracks_ativas),
+                "minutos_semana": edu.minutos_semana,
+                "areas": edu.areas,
+                "competencias": len(edu.competencias),
+            },
+            "gabinete": {
+                "demandas_abertas": cab.demandas_abertas,
+                "demandas_urgentes": cab.demandas_urgentes,
+                "municipios": cab.municipios,
+            },
         }
 
-    # ---------------------------------------------------------- Cap. 31 / 128
     def export_all(self, user_id: str) -> dict:
-        """A memória pertence ao usuário. Exportar tem que ser trivial —
-        e o formato tem que ser legível fora do Atlas."""
-        snap = self.finance.snapshot(user_id)
+        fin = self.finance.snapshot(user_id)
+        edu = self.education.snapshot(user_id)
+        cab = self.cabinet.snapshot(user_id)
         return {
             "usuario": user_id,
             "memoria_pessoal": [m.model_dump(mode="json") for m in self.personal.list(user_id, limit=10_000)],
@@ -165,21 +196,30 @@ class MemoryService:
                 ).fetchall()
             ],
             "financas": {
-                "contas": [a.model_dump(mode="json") for a in snap.contas],
-                "metas": [{**g.model_dump(mode="json"), "progress": g.progress} for g in snap.metas],
-                "saude": snap.health.model_dump(mode="json"),
+                "contas": [a.model_dump(mode="json") for a in fin.contas],
+                "metas": [{**g.model_dump(mode="json"), "progress": g.progress} for g in fin.metas],
+                "saude": fin.health.model_dump(mode="json"),
                 "lancamentos": [t.model_dump(mode="json") for t in self.finance.list_transactions(user_id, limit=10_000)],
+            },
+            "educacao": edu.model_dump(mode="json"),
+            "gabinete": {
+                "snapshot": cab.model_dump(mode="json"),
+                "cidadaos": [c.model_dump(mode="json") for c in self.cabinet.list_citizens(user_id)],
+                "demandas": [d.model_dump(mode="json") for d in self.cabinet.list_demands(user_id, limit=10_000)],
+                "timeline": [e.model_dump(mode="json") for e in self.cabinet.list_timeline(user_id, limit=10_000)],
+                "agenda": [a.model_dump(mode="json") for a in self.cabinet.list_agenda(user_id, limit=10_000)],
             },
         }
 
     def wipe(self, user_id: str) -> dict[str, int]:
-        """Apagar tudo. Sem pegadinha, sem 'soft delete', sem resíduo."""
         counts: dict[str, int] = {}
         tables = [
             "conversational_turns", "sessions", "personal_memories",
             "knowledge_edges", "knowledge_nodes", "embeddings",
             "journey_steps", "journeys", "projects", "memory_access_log",
             "finance_transactions", "finance_goals", "finance_accounts",
+            "study_sessions", "competencies", "study_tracks",
+            "cabinet_timeline", "cabinet_agenda", "cabinet_demands", "cabinet_citizens",
         ]
         with self.db.tx() as c:
             for t in tables:

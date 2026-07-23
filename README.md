@@ -70,21 +70,22 @@ Regra de dependência: **cada camada só importa a de baixo**. `memory/` não sa
 
 ## O que a Fase 1 entregou
 
-- **Plataforma web** com Início, Ayra, Jornadas, Memória, Biblioteca e Finanças
+- **Plataforma web** com Início, Ayra, Jornadas, Estudos, Finanças, Gabinete, Memória e Biblioteca
 - **Onboarding em 60s** (`POST /chat/onboard`) — objetivo → jornada planejada → sessão
 - **Chat amarrado à jornada** (`journey_id` no `/chat`)
+- **Domínio Educação** — estudo GERAL (matemática, direito, medicina, programação, concursos, idiomas…)
 - **Domínio Financeiro**: contas, lançamentos, metas e saúde (Cap. 82–92)
+- **Domínio Gabinete**: cidadãos, demandas, linha do tempo e agenda (Cap. 97–105)
 - **Biblioteca com PDF** (`.txt`, `.md`, `.pdf` via pypdf)
 - **Dashboard, auditoria, export e wipe** na UI (Caps. 31 / 127)
 - Planejamento de jornada pela Ayra (`POST /journeys/{id}/plan`)
 
 ## Próximos passos
 
-1. Ligar a chave do Gemini e conversar de verdade.
+1. Usar de verdade e ajustar o que a Ayra erra no dia a dia.
 2. Auth multi-usuário (JWT) quando sair do uso single-user.
 3. OCR para PDF escaneado (hoje só texto extraível).
 4. Postgres + pgvector quando o SQLite apertar.
-5. Domínio Educação e Gabinete Inteligente (mesma arquitetura de domínio).
 
 ## Decisões que valem defender
 

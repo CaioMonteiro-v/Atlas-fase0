@@ -281,6 +281,69 @@ def test_pdf_extract() -> None:
         check("PDF sem texto extraível é rejeitado", True)
 
 
+def test_education_general() -> None:
+    print("\n[9] Domínio Educação — estudo GERAL (não só idiomas)")
+    from app.domain.models import Competency, StudySession, StudyTrack
+    from app.education.store import EducationStore
+
+    db = make_db()
+    edu = EducationStore(db)
+
+    calc = edu.create_track(StudyTrack(
+        user_id=U, title="Cálculo I", subject_area="matematica",
+        goal="passar na prova", level="iniciante",
+    ))
+    direito = edu.create_track(StudyTrack(
+        user_id=U, title="Constitucional", subject_area="direito",
+        goal="concurso", level="intermediario",
+    ))
+    idiomas = edu.create_track(StudyTrack(
+        user_id=U, title="Inglês técnico", subject_area="idiomas",
+        goal="ler papers", level="iniciante",
+    ))
+    areas = {t.subject_area for t in edu.list_tracks(U)}
+    check("trilhas em áreas distintas (não só idiomas)", areas == {"matematica", "direito", "idiomas"})
+    check("isolamento por usuário", edu.get_track(OTHER, calc.id) is None)
+
+    edu.add_session(StudySession(user_id=U, track_id=calc.id, minutes=50, notes="limites", topics=["limites"]))
+    edu.create_competency(Competency(
+        user_id=U, track_id=calc.id, name="Limites", subject_area="matematica", level="praticar",
+    ))
+    snap = edu.snapshot(U)
+    check("snapshot tem 3 trilhas", len(snap.tracks_ativas) == 3)
+    check("minutos da semana", snap.minutos_semana >= 50)
+    check("áreas no snapshot", "matematica" in snap.areas and "direito" in snap.areas)
+
+
+def test_cabinet() -> None:
+    print("\n[10] Domínio Gabinete Inteligente")
+    from app.domain.models import CabinetCitizen, CabinetDemand, CabinetTimelineEvent
+    from app.cabinet.store import CabinetStore
+
+    db = make_db()
+    cab = CabinetStore(db)
+
+    cid = cab.create_citizen(CabinetCitizen(
+        user_id=U, name="Maria Silva", municipality="Sobral", contact="88 99999",
+    ))
+    dem = cab.create_demand(CabinetDemand(
+        user_id=U, citizen_id=cid.id, title="Pavimentação rua X",
+        municipality="Sobral", category="infraestrutura", priority="alta",
+    ))
+    cab.add_timeline(CabinetTimelineEvent(
+        user_id=U, citizen_id=cid.id, demand_id=dem.id, municipality="Sobral",
+        event_type="contato", title="Ligação recebida", description="Pediu retorno",
+    ))
+    check("demanda ligada ao cidadão", cab.get_demand(U, dem.id).citizen_id == cid.id)
+    check("outro usuário não vê demanda", cab.get_demand(OTHER, dem.id) is None)
+    cab.update_demand(U, dem.id, {"status": "em_andamento"})
+    check("status atualizado", cab.get_demand(U, dem.id).status == "em_andamento")
+    snap = cab.snapshot(U)
+    check("snapshot conta abertas", snap.demandas_abertas >= 1)
+    check("município no snapshot", "Sobral" in snap.municipios)
+    check("timeline do cidadão", len(cab.list_timeline(U, citizen_id=cid.id)) >= 1)
+
+
 if __name__ == "__main__":
     test_conversational()
     test_personal()
@@ -290,5 +353,7 @@ if __name__ == "__main__":
     test_finance()
     test_session_journey_bind()
     test_pdf_extract()
+    test_education_general()
+    test_cabinet()
     print("\nTodos os testes passaram.\n")
 

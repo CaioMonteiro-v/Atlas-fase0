@@ -328,6 +328,215 @@ class FinanceSnapshot(AtlasModel):
 
 
 # --------------------------------------------------------------------------
+# Domínio Educação (Cap. 69–81) — estudo GERAL
+# Idiomas são uma subject_area, não o domínio inteiro.
+# --------------------------------------------------------------------------
+StudyLevel = Literal["iniciante", "intermediario", "avancado"]
+StudyTrackStatus = Literal["ativa", "pausada", "concluida", "abandonada"]
+CompetencyLevel = Literal["iniciar", "praticar", "proficiente", "dominio"]
+CompetencyStatus = Literal["em_desenvolvimento", "adquirida", "a_revisar"]
+
+# Áreas canônicas — abertas o suficiente para qualquer assunto.
+SUBJECT_AREAS = (
+    "geral", "matematica", "fisica", "quimica", "biologia", "medicina",
+    "direito", "historia", "filosofia", "administracao", "economia",
+    "programacao", "engenharia", "inteligencia_artificial", "idiomas",
+    "musica", "artes", "concursos", "outro",
+)
+
+
+class StudyTrack(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    journey_id: str | None = None
+    title: str
+    subject_area: str = "geral"
+    level: StudyLevel = "iniciante"
+    goal: str = ""
+    status: StudyTrackStatus = "ativa"
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class StudyTrackCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    subject_area: str = "geral"
+    level: StudyLevel = "iniciante"
+    goal: str = ""
+    journey_id: str | None = None
+
+
+class StudySession(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str
+    minutes: int = Field(gt=0)
+    notes: str = ""
+    topics: list[str] = Field(default_factory=list)
+    occurred_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class StudySessionCreate(BaseModel):
+    track_id: str
+    minutes: int = Field(gt=0, le=24 * 60)
+    notes: str = ""
+    topics: list[str] = Field(default_factory=list)
+    occurred_at: datetime | None = None
+
+
+class Competency(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str | None = None
+    name: str
+    subject_area: str = "geral"
+    level: CompetencyLevel = "iniciar"
+    evidence: str = ""
+    status: CompetencyStatus = "em_desenvolvimento"
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class CompetencyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    subject_area: str = "geral"
+    level: CompetencyLevel = "iniciar"
+    evidence: str = ""
+    track_id: str | None = None
+
+
+class EducationSnapshot(AtlasModel):
+    tracks_ativas: list[StudyTrack] = Field(default_factory=list)
+    sessoes_recentes: list[StudySession] = Field(default_factory=list)
+    competencias: list[Competency] = Field(default_factory=list)
+    minutos_semana: int = 0
+    areas: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# Domínio Gabinete Inteligente (Cap. 97–105)
+# --------------------------------------------------------------------------
+DemandPriority = Literal["baixa", "media", "alta", "urgente"]
+DemandStatus = Literal["aberta", "em_andamento", "aguardando", "concluida", "arquivada"]
+TimelineEventType = Literal["contato", "demanda", "documento", "visita", "reuniao", "retorno", "nota"]
+AgendaStatus = Literal["agendado", "realizado", "cancelado"]
+
+
+class CabinetCitizen(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    name: str
+    municipality: str = ""
+    contact: str = ""
+    notes: str = ""
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class CabinetCitizenCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    municipality: str = ""
+    contact: str = ""
+    notes: str = ""
+
+
+class CabinetDemand(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    citizen_id: str | None = None
+    title: str
+    subject: str = ""
+    municipality: str = ""
+    category: str = "geral"
+    priority: DemandPriority = "media"
+    status: DemandStatus = "aberta"
+    origin: str = ""
+    assignee: str = ""
+    due_date: datetime | None = None
+    result: str = ""
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class CabinetDemandCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    subject: str = ""
+    municipality: str = ""
+    category: str = "geral"
+    priority: DemandPriority = "media"
+    citizen_id: str | None = None
+    origin: str = ""
+    assignee: str = ""
+    due_date: datetime | None = None
+
+
+class CabinetDemandUpdate(BaseModel):
+    status: DemandStatus | None = None
+    priority: DemandPriority | None = None
+    assignee: str | None = None
+    result: str | None = None
+    subject: str | None = None
+
+
+class CabinetTimelineEvent(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    citizen_id: str | None = None
+    demand_id: str | None = None
+    municipality: str = ""
+    event_type: TimelineEventType = "nota"
+    title: str
+    description: str = ""
+    occurred_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class CabinetTimelineCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    event_type: TimelineEventType = "nota"
+    description: str = ""
+    citizen_id: str | None = None
+    demand_id: str | None = None
+    municipality: str = ""
+    occurred_at: datetime | None = None
+
+
+class CabinetAgendaItem(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    title: str
+    municipality: str = ""
+    related_demand_id: str | None = None
+    starts_at: datetime
+    notes: str = ""
+    status: AgendaStatus = "agendado"
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class CabinetAgendaCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    starts_at: datetime
+    municipality: str = ""
+    related_demand_id: str | None = None
+    notes: str = ""
+
+
+class CabinetSnapshot(AtlasModel):
+    demandas_abertas: int = 0
+    demandas_urgentes: int = 0
+    municipios: list[str] = Field(default_factory=list)
+    recentes: list[CabinetDemand] = Field(default_factory=list)
+    agenda: list[CabinetAgendaItem] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
 # Planejamento de jornada pela Ayra (Cap. 20, Etapa 3)
 # --------------------------------------------------------------------------
 class PlannedStep(BaseModel):
@@ -349,6 +558,8 @@ class AyraContext(AtlasModel):
     knowledge: list[SearchHit] = Field(default_factory=list)
     journey: Journey | None = None
     finance: FinanceSnapshot | None = None
+    education: EducationSnapshot | None = None
+    cabinet: CabinetSnapshot | None = None
     history: list[Turn] = Field(default_factory=list)
 
     def sources(self) -> list[dict[str, str]]:
@@ -363,5 +574,14 @@ class AyraContext(AtlasModel):
                 "tipo": "financas",
                 "id": "snapshot",
                 "rotulo": f"patrimônio R$ {self.finance.health.patrimonio:,.2f}",
+            })
+        if self.education:
+            areas = ", ".join(self.education.areas[:3]) or "estudos"
+            out.append({"tipo": "educacao", "id": "snapshot", "rotulo": areas})
+        if self.cabinet:
+            out.append({
+                "tipo": "gabinete",
+                "id": "snapshot",
+                "rotulo": f"{self.cabinet.demandas_abertas} demandas abertas",
             })
         return out

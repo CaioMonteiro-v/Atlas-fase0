@@ -287,3 +287,149 @@ CREATE TABLE IF NOT EXISTS finance_goals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_fin_goals_user ON finance_goals (user_id, status);
+
+-- ---------------------------------------------------------------------
+-- Domínio Educação (Cap. 69–81) — estudo GERAL, não só idiomas
+-- Trilhas, sessões e competências. Idiomas são uma área entre muitas.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS study_tracks (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    journey_id    TEXT,
+    title         TEXT NOT NULL,
+    subject_area  TEXT NOT NULL DEFAULT 'geral',
+    -- exemplos: matematica | fisica | direito | medicina | programacao |
+    --           historia | administracao | idiomas | musica | outro | geral
+    level         TEXT NOT NULL DEFAULT 'iniciante'
+                  CHECK (level IN ('iniciante', 'intermediario', 'avancado')),
+    goal          TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'ativa'
+                  CHECK (status IN ('ativa', 'pausada', 'concluida', 'abandonada')),
+    privacy       TEXT NOT NULL DEFAULT 'private'
+                  CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (journey_id) REFERENCES journeys (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_tracks_user ON study_tracks (user_id, status);
+CREATE INDEX IF NOT EXISTS idx_study_tracks_area ON study_tracks (user_id, subject_area);
+
+CREATE TABLE IF NOT EXISTS study_sessions (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    track_id    TEXT NOT NULL,
+    minutes     INTEGER NOT NULL CHECK (minutes > 0),
+    notes       TEXT NOT NULL DEFAULT '',
+    topics      TEXT NOT NULL DEFAULT '[]',
+    occurred_at TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_sessions_track ON study_sessions (track_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_study_sessions_user ON study_sessions (user_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS competencies (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    track_id      TEXT,
+    name          TEXT NOT NULL,
+    subject_area  TEXT NOT NULL DEFAULT 'geral',
+    level         TEXT NOT NULL DEFAULT 'iniciar'
+                  CHECK (level IN ('iniciar', 'praticar', 'proficiente', 'dominio')),
+    evidence      TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'em_desenvolvimento'
+                  CHECK (status IN ('em_desenvolvimento', 'adquirida', 'a_revisar')),
+    privacy       TEXT NOT NULL DEFAULT 'private'
+                  CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_competencies_user ON competencies (user_id, status);
+
+-- ---------------------------------------------------------------------
+-- Domínio Gabinete Inteligente (Cap. 97–105)
+-- Cidadão no centro: demandas, linha do tempo, agenda.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS cabinet_citizens (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    municipality  TEXT NOT NULL DEFAULT '',
+    contact       TEXT NOT NULL DEFAULT '',
+    notes         TEXT NOT NULL DEFAULT '',
+    privacy       TEXT NOT NULL DEFAULT 'private'
+                  CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cabinet_citizens_user ON cabinet_citizens (user_id);
+CREATE INDEX IF NOT EXISTS idx_cabinet_citizens_muni ON cabinet_citizens (user_id, municipality);
+
+CREATE TABLE IF NOT EXISTS cabinet_demands (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    citizen_id    TEXT,
+    title         TEXT NOT NULL,
+    subject       TEXT NOT NULL DEFAULT '',
+    municipality  TEXT NOT NULL DEFAULT '',
+    category      TEXT NOT NULL DEFAULT 'geral',
+    priority      TEXT NOT NULL DEFAULT 'media'
+                  CHECK (priority IN ('baixa', 'media', 'alta', 'urgente')),
+    status        TEXT NOT NULL DEFAULT 'aberta'
+                  CHECK (status IN ('aberta', 'em_andamento', 'aguardando', 'concluida', 'arquivada')),
+    origin        TEXT NOT NULL DEFAULT '',
+    assignee      TEXT NOT NULL DEFAULT '',
+    due_date      TEXT,
+    result        TEXT NOT NULL DEFAULT '',
+    privacy       TEXT NOT NULL DEFAULT 'private'
+                  CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (citizen_id) REFERENCES cabinet_citizens (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cabinet_demands_user ON cabinet_demands (user_id, status);
+CREATE INDEX IF NOT EXISTS idx_cabinet_demands_muni ON cabinet_demands (user_id, municipality);
+
+CREATE TABLE IF NOT EXISTS cabinet_timeline (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    citizen_id    TEXT,
+    demand_id     TEXT,
+    municipality  TEXT NOT NULL DEFAULT '',
+    event_type    TEXT NOT NULL DEFAULT 'nota'
+                  CHECK (event_type IN ('contato', 'demanda', 'documento', 'visita', 'reuniao', 'retorno', 'nota')),
+    title         TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    occurred_at   TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    FOREIGN KEY (citizen_id) REFERENCES cabinet_citizens (id) ON DELETE SET NULL,
+    FOREIGN KEY (demand_id) REFERENCES cabinet_demands (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cabinet_timeline_user ON cabinet_timeline (user_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cabinet_timeline_citizen ON cabinet_timeline (citizen_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS cabinet_agenda (
+    id                 TEXT PRIMARY KEY,
+    user_id            TEXT NOT NULL,
+    title              TEXT NOT NULL,
+    municipality       TEXT NOT NULL DEFAULT '',
+    related_demand_id  TEXT,
+    starts_at          TEXT NOT NULL,
+    notes              TEXT NOT NULL DEFAULT '',
+    status             TEXT NOT NULL DEFAULT 'agendado'
+                       CHECK (status IN ('agendado', 'realizado', 'cancelado')),
+    privacy            TEXT NOT NULL DEFAULT 'private'
+                       CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL,
+    FOREIGN KEY (related_demand_id) REFERENCES cabinet_demands (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cabinet_agenda_user ON cabinet_agenda (user_id, starts_at);

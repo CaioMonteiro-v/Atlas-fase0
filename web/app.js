@@ -64,9 +64,11 @@ function setView(name) {
     home: loadHome,
     ayra: () => { refreshJourneySelect(); showWelcomeIfEmpty(); },
     journeys: loadJourneys,
+    education: loadEducation,
+    finance: loadFinance,
+    cabinet: loadCabinet,
     memory: loadMemory,
     library: () => {},
-    finance: loadFinance,
   };
   loaders[name]?.();
 }
@@ -307,14 +309,24 @@ async function loadHome() {
         <p>${d.jornadas_ativas} ativa(s) · ${d.jornadas_total} no total</p>
       </div>
       <div class="home-card">
-        <h3>Memória</h3>
-        <b>${d.memorias}</b>
-        <p>${d.conhecimento_nos} nós no grafo</p>
+        <h3>Estudos</h3>
+        <b>${d.educacao?.trilhas_ativas ?? 0} trilhas</b>
+        <p>${d.educacao?.minutos_semana ?? 0} min/semana · ${(d.educacao?.areas || []).join(", ") || "qualquer área"}</p>
+      </div>
+      <div class="home-card">
+        <h3>Gabinete</h3>
+        <b>${d.gabinete?.demandas_abertas ?? 0} abertas</b>
+        <p>${d.gabinete?.demandas_urgentes ?? 0} urgentes · ${(d.gabinete?.municipios || []).length} município(s)</p>
       </div>
       <div class="home-card">
         <h3>Finanças</h3>
         <b>${money(d.financas.patrimonio)}</b>
         <p>Poupança ${pct(d.financas.taxa_poupanca)} · ${d.financas.metas_ativas} meta(s)</p>
+      </div>
+      <div class="home-card">
+        <h3>Memória</h3>
+        <b>${d.memorias}</b>
+        <p>${d.conhecimento_nos} nós no grafo</p>
       </div>`;
     $("#home-open-j")?.addEventListener("click", () => {
       state.selectedJourney = j.id;
@@ -458,7 +470,7 @@ $("#btn-new-journey").addEventListener("click", async () => {
     <label>Domínio
       <select name="domain">
         <option value="geral">Geral</option>
-        <option value="educacao">Educação</option>
+        <option value="educacao">Estudos</option>
         <option value="financas">Finanças</option>
         <option value="gabinete">Gabinete</option>
       </select>
@@ -757,6 +769,262 @@ $("#btn-add-goal").addEventListener("click", async () => {
     }),
   });
   await loadFinance();
+});
+
+// ---------- education (estudo geral) ----------
+const SUBJECT_OPTS = [
+  "geral","matematica","fisica","quimica","biologia","medicina","direito",
+  "historia","filosofia","administracao","economia","programacao","engenharia",
+  "inteligencia_artificial","idiomas","musica","artes","concursos","outro",
+].map((a) => `<option value="${a}">${a}</option>`).join("");
+
+async function loadEducation() {
+  const [snap, tracks, comps, sessions] = await Promise.all([
+    api("/education/snapshot"),
+    api("/education/tracks"),
+    api("/education/competencies"),
+    api("/education/sessions?limit=15"),
+  ]);
+  $("#edu-summary").innerHTML = [
+    ["Trilhas ativas", snap.tracks_ativas?.length ?? 0],
+    ["Minutos / semana", snap.minutos_semana ?? 0],
+    ["Áreas", (snap.areas || []).join(", ") || "—"],
+    ["Competências", snap.competencias?.length ?? 0],
+  ].map(([k, v]) => `<div class="stat"><span>${k}</span><b>${escapeHtml(String(v))}</b></div>`).join("");
+
+  const tBox = $("#edu-tracks");
+  tBox.innerHTML = tracks.length ? "" : '<p class="muted">Crie uma trilha — matemática, direito, programação, concursos, idiomas…</p>';
+  for (const t of tracks) {
+    const el = document.createElement("div");
+    el.className = "row";
+    el.style.cursor = "default";
+    el.innerHTML = `
+      <h3>${escapeHtml(t.title)}</h3>
+      <p>${escapeHtml(t.subject_area)} · ${escapeHtml(t.level)}</p>
+      <div class="meta"><span>${escapeHtml(t.goal || "sem objetivo")}</span><span>${t.status}</span></div>`;
+    tBox.append(el);
+  }
+
+  const cBox = $("#edu-comps");
+  cBox.innerHTML = comps.length ? "" : '<p class="muted">Nenhuma competência registrada.</p>';
+  for (const c of comps) {
+    const el = document.createElement("div");
+    el.className = "row";
+    el.style.cursor = "default";
+    el.innerHTML = `
+      <h3>${escapeHtml(c.name)}</h3>
+      <p>${escapeHtml(c.subject_area)} · ${escapeHtml(c.level)}</p>
+      <div class="meta"><span>${escapeHtml(c.status)}</span></div>`;
+    cBox.append(el);
+  }
+
+  const sBox = $("#edu-sessions");
+  sBox.innerHTML = sessions.length ? "" : '<p class="muted">Sem sessões de estudo.</p>';
+  for (const s of sessions) {
+    const el = document.createElement("div");
+    el.className = "row";
+    el.style.cursor = "default";
+    el.innerHTML = `
+      <h3>${s.minutes} min</h3>
+      <p>${escapeHtml(s.notes || (s.topics || []).join(", ") || "estudo")}</p>`;
+    sBox.append(el);
+  }
+}
+
+$("#btn-add-track").addEventListener("click", async () => {
+  const data = await openModal("Nova trilha de estudos", `
+    <label>Título<input name="title" required placeholder="Cálculo I / Direito Constitucional / Python"></label>
+    <label>Área<select name="subject_area">${SUBJECT_OPTS}</select></label>
+    <label>Nível
+      <select name="level">
+        <option value="iniciante">iniciante</option>
+        <option value="intermediario">intermediario</option>
+        <option value="avancado">avancado</option>
+      </select>
+    </label>
+    <label>Objetivo<textarea name="goal" rows="2" placeholder="Passar na prova / dominar o tema / emprego"></textarea></label>`);
+  if (!data) return;
+  await api("/education/tracks", { method: "POST", body: JSON.stringify(data) });
+  await loadEducation();
+});
+
+$("#btn-add-session").addEventListener("click", async () => {
+  const tracks = await api("/education/tracks");
+  if (!tracks.length) { alert("Crie uma trilha primeiro."); return; }
+  const options = tracks.map((t) => `<option value="${t.id}">${escapeHtml(t.title)}</option>`).join("");
+  const data = await openModal("Registrar sessão de estudo", `
+    <label>Trilha<select name="track_id">${options}</select></label>
+    <label>Minutos<input name="minutes" type="number" min="1" value="45" required></label>
+    <label>Notas<textarea name="notes" rows="2" placeholder="O que estudou / dúvidas"></textarea></label>`);
+  if (!data) return;
+  await api("/education/sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      track_id: data.track_id,
+      minutes: Number(data.minutes),
+      notes: data.notes || "",
+      topics: [],
+    }),
+  });
+  await loadEducation();
+});
+
+$("#btn-add-comp").addEventListener("click", async () => {
+  const data = await openModal("Nova competência", `
+    <label>Nome<input name="name" required placeholder="Derivadas / Petição inicial / SQL"></label>
+    <label>Área<select name="subject_area">${SUBJECT_OPTS}</select></label>
+    <label>Nível
+      <select name="level">
+        <option value="iniciar">iniciar</option>
+        <option value="praticar">praticar</option>
+        <option value="proficiente">proficiente</option>
+        <option value="dominio">dominio</option>
+      </select>
+    </label>
+    <label>Evidência<textarea name="evidence" rows="2" placeholder="Projeto, exercício, prova…"></textarea></label>`);
+  if (!data) return;
+  await api("/education/competencies", { method: "POST", body: JSON.stringify(data) });
+  await loadEducation();
+});
+
+// ---------- cabinet ----------
+async function loadCabinet() {
+  const [snap, demands, citizens, timeline] = await Promise.all([
+    api("/cabinet/snapshot"),
+    api("/cabinet/demands"),
+    api("/cabinet/citizens"),
+    api("/cabinet/timeline?limit=20"),
+  ]);
+  $("#cab-summary").innerHTML = [
+    ["Abertas", snap.demandas_abertas],
+    ["Urgentes", snap.demandas_urgentes],
+    ["Municípios", (snap.municipios || []).length],
+    ["Agenda", (snap.agenda || []).length],
+  ].map(([k, v]) => `<div class="stat"><span>${k}</span><b>${v}</b></div>`).join("");
+
+  const dBox = $("#cab-demands");
+  dBox.innerHTML = demands.length ? "" : '<p class="muted">Nenhuma demanda.</p>';
+  for (const d of demands) {
+    const el = document.createElement("div");
+    el.className = "row";
+    el.style.cursor = "default";
+    el.innerHTML = `
+      <h3>${escapeHtml(d.title)}</h3>
+      <p>${escapeHtml(d.municipality || "s/ município")} · ${escapeHtml(d.category)}</p>
+      <div class="meta"><span>${d.priority}</span><span>${d.status}</span></div>
+      <div class="actions" style="margin-top:8px">
+        <button type="button" class="ghost" data-demand="${d.id}">Andamento</button>
+      </div>`;
+    el.querySelector("[data-demand]").addEventListener("click", async () => {
+      const data = await openModal("Atualizar demanda", `
+        <label>Status
+          <select name="status">
+            <option value="aberta">aberta</option>
+            <option value="em_andamento" selected>em_andamento</option>
+            <option value="aguardando">aguardando</option>
+            <option value="concluida">concluida</option>
+            <option value="arquivada">arquivada</option>
+          </select>
+        </label>
+        <label>Resultado<textarea name="result" rows="2"></textarea></label>`);
+      if (!data) return;
+      await api(`/cabinet/demands/${d.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: data.status, result: data.result || undefined }),
+      });
+      await loadCabinet();
+    });
+    dBox.append(el);
+  }
+
+  const cBox = $("#cab-citizens");
+  cBox.innerHTML = citizens.length ? "" : '<p class="muted">Nenhum cidadão cadastrado.</p>';
+  for (const c of citizens) {
+    const el = document.createElement("div");
+    el.className = "row";
+    el.style.cursor = "default";
+    el.innerHTML = `
+      <h3>${escapeHtml(c.name)}</h3>
+      <p>${escapeHtml(c.municipality || "—")} · ${escapeHtml(c.contact || "")}</p>`;
+    cBox.append(el);
+  }
+
+  const tBox = $("#cab-timeline");
+  tBox.innerHTML = timeline.length ? "" : '<p class="muted">Linha do tempo vazia.</p>';
+  for (const e of timeline) {
+    const el = document.createElement("div");
+    el.className = "row";
+    el.style.cursor = "default";
+    el.innerHTML = `
+      <h3>${escapeHtml(e.title)}</h3>
+      <p>${escapeHtml(e.description || "")}</p>
+      <div class="meta"><span>${e.event_type}</span><span>${escapeHtml(e.municipality || "")}</span></div>`;
+    tBox.append(el);
+  }
+}
+
+$("#btn-add-citizen").addEventListener("click", async () => {
+  const data = await openModal("Novo cidadão", `
+    <label>Nome<input name="name" required></label>
+    <label>Município<input name="municipality" placeholder="Ex.: Sobral"></label>
+    <label>Contato<input name="contact" placeholder="telefone / e-mail"></label>
+    <label>Notas<textarea name="notes" rows="2"></textarea></label>`);
+  if (!data) return;
+  await api("/cabinet/citizens", { method: "POST", body: JSON.stringify(data) });
+  await loadCabinet();
+});
+
+$("#btn-add-demand").addEventListener("click", async () => {
+  const citizens = await api("/cabinet/citizens");
+  const opts = '<option value="">— sem vincular —</option>' +
+    citizens.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
+  const data = await openModal("Nova demanda", `
+    <label>Título<input name="title" required placeholder="Pavimentação / Ofício / Emprego"></label>
+    <label>Assunto<textarea name="subject" rows="2"></textarea></label>
+    <label>Município<input name="municipality"></label>
+    <label>Categoria<input name="category" value="geral"></label>
+    <label>Prioridade
+      <select name="priority">
+        <option value="baixa">baixa</option>
+        <option value="media" selected>media</option>
+        <option value="alta">alta</option>
+        <option value="urgente">urgente</option>
+      </select>
+    </label>
+    <label>Cidadão<select name="citizen_id">${opts}</select></label>`);
+  if (!data) return;
+  await api("/cabinet/demands", {
+    method: "POST",
+    body: JSON.stringify({
+      title: data.title,
+      subject: data.subject || "",
+      municipality: data.municipality || "",
+      category: data.category || "geral",
+      priority: data.priority,
+      citizen_id: data.citizen_id || null,
+    }),
+  });
+  await loadCabinet();
+});
+
+$("#btn-add-agenda").addEventListener("click", async () => {
+  const data = await openModal("Novo compromisso", `
+    <label>Título<input name="title" required placeholder="Reunião com prefeito"></label>
+    <label>Quando<input name="starts_at" type="datetime-local" required></label>
+    <label>Município<input name="municipality"></label>
+    <label>Notas<textarea name="notes" rows="2"></textarea></label>`);
+  if (!data) return;
+  const iso = new Date(data.starts_at).toISOString();
+  await api("/cabinet/agenda", {
+    method: "POST",
+    body: JSON.stringify({
+      title: data.title,
+      starts_at: iso,
+      municipality: data.municipality || "",
+      notes: data.notes || "",
+    }),
+  });
+  await loadCabinet();
 });
 
 // ---------- boot ----------

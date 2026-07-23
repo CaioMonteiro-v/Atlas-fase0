@@ -92,6 +92,47 @@ def build_prompt(ctx: AyraContext, question: str) -> tuple[str, list[Message]]:
             f"nunca decida por ele. Lembre que investimentos envolvem risco."
         )
 
+    if ctx.education:
+        e = ctx.education
+        trilhas = "\n".join(
+            f"- [{t.subject_area}] {t.title} ({t.level}) — objetivo: {t.goal or '—'}"
+            for t in e.tracks_ativas
+        ) or "- nenhuma trilha ativa"
+        comps = "\n".join(
+            f"- {c.name} ({c.subject_area}): {c.level} / {c.status}"
+            for c in e.competencias[:6]
+        ) or "- sem competências registradas"
+        blocks.append(
+            f"## Estudos (Domínio Educação — estudo GERAL, não só idiomas)\n"
+            f"Minutos esta semana: {e.minutos_semana}\n"
+            f"Áreas ativas: {', '.join(e.areas) or 'nenhuma'}\n"
+            f"Trilhas:\n{trilhas}\n"
+            f"Competências:\n{comps}\n"
+            f"Você está no papel de mentora: ensine, adapte o método, verifique compreensão. "
+            f"Qualquer área do conhecimento — matemática, direito, medicina, programação, "
+            f"história, concursos, idiomas etc."
+        )
+
+    if ctx.cabinet:
+        c = ctx.cabinet
+        dems = "\n".join(
+            f"- [{d.priority}/{d.status}] {d.title} ({d.municipality or 's/ município'})"
+            for d in c.recentes[:6]
+        ) or "- nenhuma demanda recente"
+        agenda = "\n".join(
+            f"- {a.starts_at}: {a.title} ({a.municipality or '—'})"
+            for a in c.agenda[:5]
+        ) or "- agenda vazia"
+        blocks.append(
+            f"## Gabinete Inteligente (Domínio Governamental)\n"
+            f"Demandas abertas: {c.demandas_abertas} (urgentes/altas: {c.demandas_urgentes})\n"
+            f"Municípios: {', '.join(c.municipios) or '—'}\n"
+            f"Demandas recentes:\n{dems}\n"
+            f"Agenda:\n{agenda}\n"
+            f"Você está no papel de assessora parlamentar: organize, contextualize, "
+            f"preserve o cidadão no centro. Não substitua decisão política."
+        )
+
     system = SYSTEM + ("\n\n---\n\n" + "\n\n".join(blocks) if blocks else "")
 
     messages = [Message(role="user" if t.speaker == "user" else "assistant", content=t.text)
