@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
-from app.api.deps import get_memory, get_planner
+from app.api.deps import get_ingestor, get_memory, get_planner, get_study_mentor
 from app.ayra.orchestrator import JourneyPlanner
 from app.core.security import current_user_id
 from app.domain.models import (
@@ -15,7 +15,9 @@ from app.domain.models import (
     Journey,
     PersonalMemory,
     Privacy,
+    QuizSubmit,
     StartStudyWithAyra,
+    StudyMaterial,
     StudyNote,
     StudyNoteCreate,
     StudySession,
@@ -25,6 +27,8 @@ from app.domain.models import (
     new_id,
     utcnow,
 )
+from app.education.mentor import StudyMentor
+from app.knowledge.ingest import DocumentIngestor
 from app.memory.service import MemoryService
 
 router = APIRouter(prefix="/education", tags=["educacao"])
@@ -88,8 +92,9 @@ async def start_with_ayra(
     user_id: str = Depends(current_user_id),
     memory: MemoryService = Depends(get_memory),
     planner: JourneyPlanner = Depends(get_planner),
+    mentor: StudyMentor = Depends(get_study_mentor),
 ):
-    """Quero aprender X → trilha + jornada + sessão com a Ayra ensinando.
+    """Quero aprender X → trilha + capítulos + jornada + sessão com a Ayra ensinando.
 
     Ex.: topic='Direito Constitucional' | 'Cálculo 1' | 'Fisioterapia respiratória'
     """
@@ -132,21 +137,33 @@ async def start_with_ayra(
     journey = planned or memory.journeys.get(user_id, journey.id)
     memory.education.link_journey(user_id, track.id, journey.id)
 
+    chapters = await mentor.generate_chapters(user_id, track.id)
+    first = chapters[0] if chapters else None
+    if first:
+        memory.education.set_chapter_status(user_id, first.id, "em_progresso")
+
     session_id = new_id()
     memory.conversation.ensure_session(user_id, session_id, journey_id=journey.id)
+
+    first_bit = (
+        f"Comece pelo capítulo 1: «{first.title}». {first.summary} "
+        if first else "Comece pelo fundamento mais importante. "
+    )
 
     return {
         "track": track.model_dump(mode="json"),
         "journey": {**journey.model_dump(mode="json"), "progress": journey.progress},
+        "chapters": [c.model_dump(mode="json") for c in chapters],
         "session_id": session_id,
         "mensagem_sugerida": (
             f"Quero que você seja minha mentora em «{topic}». "
             f"Meu nível é {body.level}. Objetivo: {goal}. "
-            "Comece pelo fundamento mais importante, explique com clareza, "
-            "dê um exemplo e no fim me faça uma pergunta para checar se eu entendi. "
-            "Depois eu anoto o que aprendi no caderno."
+            f"{first_bit}"
+            "Explique com clareza, dê um exemplo e no fim me faça uma pergunta de checagem. "
+            "Depois eu anoto o que aprendi e faço o quiz do capítulo."
         ),
     }
+
 
 
 # ------------------------------------------------------------------ sessões
@@ -255,3 +272,166 @@ def patch_competency(
     if not updated:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "competência não encontrada")
     return updated.model_dump(mode="json")
+
+
+# --------------------------------------------------------------- capítulos
+@router.get("/tracks/{track_id}/chapters")
+def list_chapters(
+    track_id: str,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    if not memory.education.get_track(user_id, track_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "trilha não encontrada")
+    return [c.model_dump(mode="json") for c in memory.education.list_chapters(user_id, track_id)]
+
+
+@router.post("/tracks/{track_id}/chapters/generate")
+async def generate_chapters(
+    track_id: str,
+    user_id: str = Depends(current_user_id),
+    mentor: StudyMentor = Depends(get_study_mentor),
+):
+    try:
+        chapters = await mentor.generate_chapters(user_id, track_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return [c.model_dump(mode="json") for c in chapters]
+
+
+@router.patch("/chapters/{chapter_id}")
+def patch_chapter(
+    chapter_id: str,
+    new_status: str = "concluido",
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    if new_status not in {"pendente", "em_progresso", "concluido"}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "status inválido")
+    if not memory.education.set_chapter_status(user_id, chapter_id, new_status):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "capítulo não encontrado")
+    ch = memory.education.get_chapter(user_id, chapter_id)
+    return ch.model_dump(mode="json") if ch else {}
+
+
+# ------------------------------------------------------------------- quizzes
+@router.get("/tracks/{track_id}/quizzes")
+def list_quizzes(
+    track_id: str,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    return [q.model_dump(mode="json") for q in memory.education.list_quizzes(user_id, track_id)]
+
+
+@router.post("/tracks/{track_id}/quizzes")
+async def create_quiz(
+    track_id: str,
+    chapter_id: str | None = None,
+    user_id: str = Depends(current_user_id),
+    mentor: StudyMentor = Depends(get_study_mentor),
+):
+    try:
+        quiz = await mentor.generate_quiz(user_id, track_id, chapter_id=chapter_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return quiz.model_dump(mode="json")
+
+
+@router.get("/quizzes/{quiz_id}")
+def get_quiz(
+    quiz_id: str,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    quiz = memory.education.get_quiz(user_id, quiz_id)
+    if not quiz:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "quiz não encontrado")
+    return quiz.model_dump(mode="json")
+
+
+@router.post("/quizzes/{quiz_id}/submit")
+async def submit_quiz(
+    quiz_id: str,
+    body: QuizSubmit,
+    user_id: str = Depends(current_user_id),
+    mentor: StudyMentor = Depends(get_study_mentor),
+):
+    try:
+        quiz = await mentor.grade_quiz(user_id, quiz_id, body.answers)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return quiz.model_dump(mode="json")
+
+
+# --------------------------------------------------------------- materiais
+@router.get("/tracks/{track_id}/materials")
+def list_materials(
+    track_id: str,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    if not memory.education.get_track(user_id, track_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "trilha não encontrada")
+    return [m.model_dump(mode="json") for m in memory.education.list_materials(user_id, track_id)]
+
+
+@router.post("/tracks/{track_id}/materials", status_code=status.HTTP_202_ACCEPTED)
+async def upload_material(
+    track_id: str,
+    background: BackgroundTasks,
+    file: UploadFile,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+    ingestor: DocumentIngestor = Depends(get_ingestor),
+):
+    """PDF/txt/md da trilha → grafo. A Ayra passa a ensinar a partir desse material."""
+    from app.knowledge.extract import extract_text_from_bytes
+
+    track = memory.education.get_track(user_id, track_id)
+    if not track:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "trilha não encontrada")
+
+    raw = await file.read()
+    if len(raw) > 8_000_000:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "arquivo acima de 8 MB")
+
+    title = file.filename or f"material-{track.title}"
+    try:
+        text, fmt = extract_text_from_bytes(title, raw)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
+
+    if len(text.strip()) < 40:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "documento sem conteúdo suficiente")
+
+    mat = memory.education.create_material(
+        StudyMaterial(
+            user_id=user_id,
+            track_id=track_id,
+            title=title,
+            formato=fmt,
+            status="processando",
+        )
+    )
+
+    async def _run() -> None:
+        try:
+            report = await ingestor.ingest(
+                user_id,
+                f"[{track.title}] {title}",
+                text,
+                {"origem": "trilha", "track_id": track_id, "formato": fmt},
+            )
+            memory.education.update_material(
+                user_id, mat.id, node_id=report.document_id, status="pronto"
+            )
+        except Exception:
+            memory.education.update_material(user_id, mat.id, status="erro")
+
+    background.add_task(_run)
+    return {
+        **mat.model_dump(mode="json"),
+        "caracteres": len(text),
+        "aviso": "Material sendo estruturado no grafo. Em instantes a Ayra poderá usá-lo.",
+    }

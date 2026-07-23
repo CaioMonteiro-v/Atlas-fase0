@@ -7,6 +7,7 @@ const state = {
   journeyId: null,
   journeys: [],
   selectedJourney: null,
+  selectedTrack: null,
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -781,27 +782,33 @@ async function loadEducation() {
   ]);
   $("#edu-summary").innerHTML = [
     ["Trilhas", snap.tracks_ativas?.length ?? 0],
+    ["Capítulos pendentes", snap.capitulos_pendentes ?? 0],
+    ["Quizzes abertos", snap.quizzes_abertos ?? 0],
     ["Minutos / semana", snap.minutos_semana ?? 0],
-    ["Anotações", snap.notas_recentes?.length ?? notes.length ?? 0],
-    ["Áreas", (snap.areas || []).slice(0, 3).join(", ") || "qualquer"],
   ].map(([k, v]) => `<div class="stat"><span>${k}</span><b>${escapeHtml(String(v))}</b></div>`).join("");
 
   const tBox = $("#edu-tracks");
   tBox.innerHTML = tracks.length ? "" : '<p class="muted">Nenhuma trilha ainda. Digite o que quer aprender acima.</p>';
   for (const t of tracks) {
     const el = document.createElement("div");
-    el.className = "row";
-    el.style.cursor = "default";
+    el.className = "row" + (state.selectedTrack === t.id ? " is-selected" : "");
     el.innerHTML = `
       <h3>${escapeHtml(t.title)}</h3>
       <p>${escapeHtml(t.subject_area)} · ${escapeHtml(t.level)}</p>
       <div class="meta"><span>${escapeHtml(t.goal || "aprender com compreensão")}</span></div>
       <div class="actions" style="margin-top:10px">
+        <button type="button" class="ghost" data-open="${t.id}">Abrir</button>
         <button type="button" class="primary" data-mentor="${t.id}">Continuar com Ayra</button>
-        <button type="button" class="ghost" data-note-track="${t.id}">Anotar</button>
       </div>`;
-    el.querySelector("[data-mentor]").addEventListener("click", () => continueWithAyra(t));
-    el.querySelector("[data-note-track]").addEventListener("click", () => addNoteForTrack(t));
+    el.querySelector("[data-open]").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openTrack(t);
+    });
+    el.querySelector("[data-mentor]").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      continueWithAyra(t);
+    });
+    el.addEventListener("click", () => openTrack(t));
     tBox.append(el);
   }
 
@@ -824,7 +831,7 @@ async function loadEducation() {
   }
 
   const cBox = $("#edu-comps");
-  cBox.innerHTML = comps.length ? "" : '<p class="muted">Competências aparecem conforme você evolui.</p>';
+  cBox.innerHTML = comps.length ? "" : '<p class="muted">Competências aparecem quando você acerta quizzes.</p>';
   for (const c of comps) {
     const el = document.createElement("div");
     el.className = "row";
@@ -832,9 +839,144 @@ async function loadEducation() {
     el.innerHTML = `
       <h3>${escapeHtml(c.name)}</h3>
       <p>${escapeHtml(c.subject_area)} · ${escapeHtml(c.level)}</p>
-      <div class="meta"><span>${escapeHtml(c.status)}</span></div>`;
+      <div class="meta"><span>${escapeHtml(c.status)}</span><span>${escapeHtml(c.evidence || "")}</span></div>`;
     cBox.append(el);
   }
+
+  if (state.selectedTrack) {
+    const t = tracks.find((x) => x.id === state.selectedTrack);
+    if (t) await renderTrackDetail(t);
+  }
+}
+
+async function openTrack(track) {
+  state.selectedTrack = track.id;
+  await loadEducation();
+}
+
+async function renderTrackDetail(track) {
+  const [chapters, materials] = await Promise.all([
+    api(`/education/tracks/${track.id}/chapters`),
+    api(`/education/tracks/${track.id}/materials`),
+  ]);
+
+  const chBox = $("#edu-chapters");
+  if (!chapters.length) {
+    chBox.innerHTML = `
+      <p class="muted">Sem capítulos ainda.</p>
+      <button type="button" class="primary" id="btn-gen-chapters">Gerar capítulos com Ayra</button>`;
+    $("#btn-gen-chapters")?.addEventListener("click", async () => {
+      $("#btn-gen-chapters").disabled = true;
+      $("#btn-gen-chapters").textContent = "Gerando…";
+      await api(`/education/tracks/${track.id}/chapters/generate`, { method: "POST" });
+      await renderTrackDetail(track);
+    });
+  } else {
+    chBox.innerHTML = "";
+    for (const ch of chapters) {
+      const el = document.createElement("div");
+      el.className = "row";
+      el.style.cursor = "default";
+      el.innerHTML = `
+        <h3>${ch.order_index + 1}. ${escapeHtml(ch.title)}</h3>
+        <p>${escapeHtml(ch.summary || "")}</p>
+        <div class="meta"><span>${ch.status}</span></div>
+        <div class="actions" style="margin-top:8px">
+          <button type="button" class="primary" data-study-ch="${ch.id}">Estudar</button>
+          <button type="button" class="ghost" data-quiz-ch="${ch.id}">Quiz</button>
+          <button type="button" class="ghost" data-done-ch="${ch.id}">Concluir</button>
+        </div>`;
+      el.querySelector("[data-study-ch]").addEventListener("click", async () => {
+        await api(`/education/chapters/${ch.id}?new_status=em_progresso`, { method: "PATCH" });
+        state.journeyId = track.journey_id || null;
+        setView("ayra");
+        await refreshJourneySelect();
+        if (track.journey_id) journeySelect.value = track.journey_id;
+        await sendChat(
+          `Vamos estudar o capítulo «${ch.title}» de ${track.title}. ${ch.summary} ` +
+          `Objetivos: ${(ch.objectives || []).join("; ")}. Ensine e faça uma pergunta de checagem.`,
+          { clearInput: false }
+        );
+      });
+      el.querySelector("[data-quiz-ch]").addEventListener("click", () => runQuiz(track.id, ch.id, ch.title));
+      el.querySelector("[data-done-ch]").addEventListener("click", async () => {
+        await api(`/education/chapters/${ch.id}?new_status=concluido`, { method: "PATCH" });
+        await renderTrackDetail(track);
+      });
+      chBox.append(el);
+    }
+    const quizAll = document.createElement("button");
+    quizAll.className = "ghost";
+    quizAll.textContent = "Quiz geral da trilha";
+    quizAll.style.marginTop = "8px";
+    quizAll.addEventListener("click", () => runQuiz(track.id, null, track.title));
+    chBox.append(quizAll);
+  }
+
+  const mBox = $("#edu-materials");
+  mBox.innerHTML = `
+    <form id="mat-form" class="inline-form" style="margin-bottom:10px">
+      <input type="file" id="mat-file" accept=".txt,.md,.pdf,application/pdf" required>
+      <button type="submit" class="primary">Enviar material</button>
+    </form>`;
+  if (!materials.length) {
+    mBox.insertAdjacentHTML("beforeend", '<p class="muted">Nenhum material. Envie a apostila/PDF desta trilha.</p>');
+  }
+  for (const m of materials) {
+    const el = document.createElement("div");
+    el.className = "row";
+    el.style.cursor = "default";
+    el.innerHTML = `<h3>${escapeHtml(m.title)}</h3><div class="meta"><span>${m.formato}</span><span>${m.status}</span></div>`;
+    mBox.append(el);
+  }
+  $("#mat-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const file = $("#mat-file").files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch(`${API}/education/tracks/${track.id}/materials`, {
+      method: "POST",
+      headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+      body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.detail || res.status);
+      return;
+    }
+    alert(data.aviso || "Material enviado.");
+    await renderTrackDetail(track);
+  });
+}
+
+async function runQuiz(trackId, chapterId, label) {
+  const q = chapterId
+    ? await api(`/education/tracks/${trackId}/quizzes?chapter_id=${chapterId}`, { method: "POST" })
+    : await api(`/education/tracks/${trackId}/quizzes`, { method: "POST" });
+
+  const fields = (q.questions || []).map((qq, i) => `
+    <label>${i + 1}. ${escapeHtml(qq.pergunta)}
+      <textarea name="a_${qq.id}" rows="2" required placeholder="Sua resposta"></textarea>
+    </label>`).join("");
+
+  const data = await openModal(`Quiz: ${label}`, fields || "<p>Sem perguntas</p>", { okLabel: "Enviar" });
+  if (!data) return;
+
+  const answers = (q.questions || []).map((qq) => ({
+    question_id: qq.id,
+    resposta: data[`a_${qq.id}`] || "",
+  }));
+  const graded = await api(`/education/quizzes/${q.id}/submit`, {
+    method: "POST",
+    body: JSON.stringify({ answers }),
+  });
+  const score = graded.score != null ? Math.round(graded.score * 100) : "?";
+  const fb = (graded.answers || []).map((a) =>
+    `${a.correto ? "✓" : "✗"} ${a.feedback || ""}`
+  ).join("\n");
+  alert(`Score: ${score}%\n\n${fb}`);
+  await loadEducation();
 }
 
 async function continueWithAyra(track) {
@@ -845,7 +987,7 @@ async function continueWithAyra(track) {
   const msg = (
     `Vamos continuar «${track.title}» (${track.subject_area}). ` +
     `Nível ${track.level}. Objetivo: ${track.goal || "compreensão real"}. ` +
-    `Retome do próximo conceito e me faça uma pergunta de checagem no final.`
+    `Retome do próximo capítulo/conceito e me faça uma pergunta de checagem no final.`
   );
   await sendChat(msg, { clearInput: false });
 }
@@ -879,7 +1021,7 @@ $("#study-start-form").addEventListener("submit", async (e) => {
   if (!topic) return;
   const btn = $("#study-go");
   btn.disabled = true;
-  btn.textContent = "Preparando mentoria…";
+  btn.textContent = "Montando curso…";
   try {
     const data = await api("/education/start-with-ayra", {
       method: "POST",
@@ -887,6 +1029,7 @@ $("#study-start-form").addEventListener("submit", async (e) => {
     });
     state.sessionId = data.session_id;
     state.journeyId = data.journey.id;
+    state.selectedTrack = data.track.id;
     sess.textContent = `sessão ${data.session_id.slice(0, 8)}`;
     setView("ayra");
     await refreshJourneySelect();
@@ -910,7 +1053,10 @@ $("#btn-add-note").addEventListener("click", async () => {
     alert("Comece uma trilha em «O que você quer aprender?» primeiro.");
     return;
   }
-  const options = tracks.map((t) => `<option value="${t.id}">${escapeHtml(t.title)}</option>`).join("");
+  const preferred = state.selectedTrack || tracks[0].id;
+  const options = tracks.map((t) =>
+    `<option value="${t.id}" ${t.id === preferred ? "selected" : ""}>${escapeHtml(t.title)}</option>`
+  ).join("");
   const data = await openModal("Nova anotação de aprendizado", `
     <label>Trilha<select name="track_id">${options}</select></label>
     <label>Título<input name="title" placeholder="Conceito do dia"></label>

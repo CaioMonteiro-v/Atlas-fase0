@@ -7,6 +7,7 @@ from fastapi import Request
 
 from app.ayra.orchestrator import Ayra, Consolidator, JourneyPlanner
 from app.core.db import Database
+from app.education.mentor import StudyMentor
 from app.knowledge.ingest import DocumentIngestor
 from app.llm.base import LLM
 from app.memory.service import MemoryService
@@ -42,3 +43,8 @@ def get_ingestor(request: Request) -> DocumentIngestor:
 
 def get_planner(request: Request) -> JourneyPlanner:
     return JourneyPlanner(request.app.state.memory, request.app.state.llm)
+
+
+def get_study_mentor(request: Request) -> StudyMentor:
+    from app.education.mentor import StudyMentor
+    return StudyMentor(request.app.state.memory, request.app.state.llm)

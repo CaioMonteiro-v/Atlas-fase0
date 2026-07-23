@@ -17,9 +17,14 @@ from app.domain.models import (
     Competency,
     EducationSnapshot,
     Privacy,
+    StudyChapter,
+    StudyMaterial,
     StudyNote,
+    StudyQuiz,
     StudySession,
     StudyTrack,
+    QuizAnswer,
+    QuizQuestion,
     utcnow,
 )
 
@@ -214,6 +219,161 @@ class EducationStore:
             )
             return cur.rowcount > 0
 
+    # -------------------------------------------------------------- chapters
+    def add_chapters(self, user_id: str, track_id: str, chapters: list[StudyChapter]) -> list[StudyChapter]:
+        with self.db.tx() as c:
+            own = c.execute(
+                "SELECT id FROM study_tracks WHERE id = ? AND user_id = ?",
+                (track_id, user_id),
+            ).fetchone()
+            if not own:
+                raise ValueError("trilha não encontrada")
+            start = c.execute(
+                "SELECT COALESCE(MAX(order_index), -1) + 1 AS n FROM study_chapters WHERE track_id = ?",
+                (track_id,),
+            ).fetchone()["n"]
+            for i, ch in enumerate(chapters):
+                ch.user_id = user_id
+                ch.track_id = track_id
+                ch.order_index = start + i
+                c.execute(
+                    """INSERT INTO study_chapters
+                       (id, user_id, track_id, order_index, title, summary, objectives,
+                        status, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        ch.id, user_id, track_id, ch.order_index, ch.title, ch.summary,
+                        json.dumps(ch.objectives, ensure_ascii=False), ch.status,
+                        _iso(ch.created_at), _iso(ch.updated_at),
+                    ),
+                )
+        return chapters
+
+    def list_chapters(self, user_id: str, track_id: str) -> list[StudyChapter]:
+        rows = self.db.connect().execute(
+            """SELECT * FROM study_chapters WHERE user_id = ? AND track_id = ?
+               ORDER BY order_index""",
+            (user_id, track_id),
+        ).fetchall()
+        return [self._to_chapter(r) for r in rows]
+
+    def get_chapter(self, user_id: str, chapter_id: str) -> StudyChapter | None:
+        r = self.db.connect().execute(
+            "SELECT * FROM study_chapters WHERE id = ? AND user_id = ?",
+            (chapter_id, user_id),
+        ).fetchone()
+        return self._to_chapter(r) if r else None
+
+    def set_chapter_status(self, user_id: str, chapter_id: str, status: str) -> bool:
+        with self.db.tx() as c:
+            cur = c.execute(
+                "UPDATE study_chapters SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (status, _iso(utcnow()), chapter_id, user_id),
+            )
+            return cur.rowcount > 0
+
+    def count_pending_chapters(self, user_id: str) -> int:
+        r = self.db.connect().execute(
+            "SELECT COUNT(*) AS n FROM study_chapters WHERE user_id = ? AND status != 'concluido'",
+            (user_id,),
+        ).fetchone()
+        return int(r["n"])
+
+    # ---------------------------------------------------------------- quizzes
+    def create_quiz(self, quiz: StudyQuiz) -> StudyQuiz:
+        with self.db.tx() as c:
+            c.execute(
+                """INSERT INTO study_quizzes
+                   (id, user_id, track_id, chapter_id, title, questions, answers,
+                    score, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    quiz.id, quiz.user_id, quiz.track_id, quiz.chapter_id, quiz.title,
+                    json.dumps([q.model_dump() for q in quiz.questions], ensure_ascii=False),
+                    json.dumps([a.model_dump() for a in quiz.answers], ensure_ascii=False),
+                    quiz.score, quiz.status, _iso(quiz.created_at), _iso(quiz.updated_at),
+                ),
+            )
+        return quiz
+
+    def get_quiz(self, user_id: str, quiz_id: str) -> StudyQuiz | None:
+        r = self.db.connect().execute(
+            "SELECT * FROM study_quizzes WHERE id = ? AND user_id = ?",
+            (quiz_id, user_id),
+        ).fetchone()
+        return self._to_quiz(r) if r else None
+
+    def list_quizzes(self, user_id: str, track_id: str | None = None) -> list[StudyQuiz]:
+        sql = "SELECT * FROM study_quizzes WHERE user_id = ?"
+        params: list[Any] = [user_id]
+        if track_id:
+            sql += " AND track_id = ?"
+            params.append(track_id)
+        sql += " ORDER BY created_at DESC"
+        rows = self.db.connect().execute(sql, params).fetchall()
+        return [self._to_quiz(r) for r in rows]
+
+    def save_quiz_result(
+        self, user_id: str, quiz_id: str, answers: list[QuizAnswer], score: float
+    ) -> StudyQuiz | None:
+        with self.db.tx() as c:
+            cur = c.execute(
+                """UPDATE study_quizzes
+                   SET answers = ?, score = ?, status = 'corrigido', updated_at = ?
+                   WHERE id = ? AND user_id = ?""",
+                (
+                    json.dumps([a.model_dump() for a in answers], ensure_ascii=False),
+                    score, _iso(utcnow()), quiz_id, user_id,
+                ),
+            )
+            if cur.rowcount == 0:
+                return None
+        return self.get_quiz(user_id, quiz_id)
+
+    def count_open_quizzes(self, user_id: str) -> int:
+        r = self.db.connect().execute(
+            "SELECT COUNT(*) AS n FROM study_quizzes WHERE user_id = ? AND status = 'aberto'",
+            (user_id,),
+        ).fetchone()
+        return int(r["n"])
+
+    # -------------------------------------------------------------- materials
+    def create_material(self, mat: StudyMaterial) -> StudyMaterial:
+        with self.db.tx() as c:
+            c.execute(
+                """INSERT INTO study_materials
+                   (id, user_id, track_id, node_id, title, formato, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    mat.id, mat.user_id, mat.track_id, mat.node_id, mat.title,
+                    mat.formato, mat.status, _iso(mat.created_at),
+                ),
+            )
+        return mat
+
+    def update_material(
+        self, user_id: str, mat_id: str, *, node_id: str | None = None, status: str | None = None
+    ) -> None:
+        with self.db.tx() as c:
+            if node_id is not None and status is not None:
+                c.execute(
+                    "UPDATE study_materials SET node_id = ?, status = ? WHERE id = ? AND user_id = ?",
+                    (node_id, status, mat_id, user_id),
+                )
+            elif status is not None:
+                c.execute(
+                    "UPDATE study_materials SET status = ? WHERE id = ? AND user_id = ?",
+                    (status, mat_id, user_id),
+                )
+
+    def list_materials(self, user_id: str, track_id: str) -> list[StudyMaterial]:
+        rows = self.db.connect().execute(
+            """SELECT * FROM study_materials WHERE user_id = ? AND track_id = ?
+               ORDER BY created_at DESC""",
+            (user_id, track_id),
+        ).fetchall()
+        return [self._to_material(r) for r in rows]
+
     # -------------------------------------------------------------- snapshot
     def snapshot(self, user_id: str) -> EducationSnapshot:
         tracks = self.list_tracks(user_id, status="ativa")
@@ -226,11 +386,20 @@ class EducationStore:
             if s.occurred_at and s.occurred_at >= week_ago
         ]
         areas = sorted({t.subject_area for t in tracks})
+        proximos: list[StudyChapter] = []
+        for t in tracks[:5]:
+            for ch in self.list_chapters(user_id, t.id):
+                if ch.status != "concluido":
+                    proximos.append(ch)
+                    break
         return EducationSnapshot(
             tracks_ativas=tracks,
             sessoes_recentes=sessions,
             competencias=comps,
             notas_recentes=notes,
+            proximos_capitulos=proximos,
+            capitulos_pendentes=self.count_pending_chapters(user_id),
+            quizzes_abertos=self.count_open_quizzes(user_id),
             minutos_semana=sum(s.minutes for s in week_sessions),
             areas=areas,
         )
@@ -268,4 +437,31 @@ class EducationStore:
             id=r["id"], user_id=r["user_id"], track_id=r["track_id"], session_id=r["session_id"],
             title=r["title"], content=r["content"], topic=r["topic"],
             created_at=_dt(r["created_at"]), updated_at=_dt(r["updated_at"]),
+        )
+
+    @staticmethod
+    def _to_chapter(r: sqlite3.Row) -> StudyChapter:
+        return StudyChapter(
+            id=r["id"], user_id=r["user_id"], track_id=r["track_id"],
+            order_index=r["order_index"], title=r["title"], summary=r["summary"],
+            objectives=json.loads(r["objectives"] or "[]"), status=r["status"],
+            created_at=_dt(r["created_at"]), updated_at=_dt(r["updated_at"]),
+        )
+
+    @staticmethod
+    def _to_quiz(r: sqlite3.Row) -> StudyQuiz:
+        qs = [QuizQuestion(**q) for q in json.loads(r["questions"] or "[]")]
+        ans = [QuizAnswer(**a) for a in json.loads(r["answers"] or "[]")]
+        return StudyQuiz(
+            id=r["id"], user_id=r["user_id"], track_id=r["track_id"], chapter_id=r["chapter_id"],
+            title=r["title"], questions=qs, answers=ans, score=r["score"], status=r["status"],
+            created_at=_dt(r["created_at"]), updated_at=_dt(r["updated_at"]),
+        )
+
+    @staticmethod
+    def _to_material(r: sqlite3.Row) -> StudyMaterial:
+        return StudyMaterial(
+            id=r["id"], user_id=r["user_id"], track_id=r["track_id"], node_id=r["node_id"],
+            title=r["title"], formato=r["formato"], status=r["status"],
+            created_at=_dt(r["created_at"]),
         )

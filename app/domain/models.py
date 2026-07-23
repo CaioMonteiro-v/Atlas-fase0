@@ -442,11 +442,104 @@ class StartStudyWithAyra(BaseModel):
     subject_area: str = ""  # se vazio, usa o próprio topic
 
 
+class StudyChapter(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str
+    order_index: int = 0
+    title: str
+    summary: str = ""
+    objectives: list[str] = Field(default_factory=list)
+    status: Literal["pendente", "em_progresso", "concluido"] = "pendente"
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class StudyChapterCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    summary: str = ""
+    objectives: list[str] = Field(default_factory=list)
+
+
+class PlannedChapter(BaseModel):
+    title: str
+    summary: str = ""
+    objectives: list[str] = Field(default_factory=list)
+
+
+class ChapterPlan(BaseModel):
+    chapters: list[PlannedChapter] = Field(default_factory=list)
+
+
+class QuizQuestion(BaseModel):
+    id: str = Field(default_factory=new_id)
+    pergunta: str
+    opcoes: list[str] = Field(default_factory=list)  # vazio = resposta aberta
+    resposta_esperada: str = ""
+    explicacao: str = ""
+
+
+class QuizAnswer(BaseModel):
+    question_id: str
+    resposta: str
+    correto: bool | None = None
+    feedback: str = ""
+
+
+class StudyQuiz(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str
+    chapter_id: str | None = None
+    title: str
+    questions: list[QuizQuestion] = Field(default_factory=list)
+    answers: list[QuizAnswer] = Field(default_factory=list)
+    score: float | None = None
+    status: Literal["aberto", "corrigido"] = "aberto"
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class QuizGradeItem(BaseModel):
+    question_id: str
+    correto: bool
+    feedback: str = ""
+
+
+class QuizGradeResult(BaseModel):
+    itens: list[QuizGradeItem] = Field(default_factory=list)
+    competencia_sugerida: str = ""
+    nivel_sugerido: CompetencyLevel = "praticar"
+
+
+class QuizSubmit(BaseModel):
+    answers: list[dict] = Field(default_factory=list)  # [{question_id, resposta}]
+
+
+class PlannedQuiz(BaseModel):
+    title: str = "Checagem de compreensão"
+    questions: list[QuizQuestion] = Field(default_factory=list)
+
+
+class StudyMaterial(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str
+    node_id: str | None = None
+    title: str
+    formato: str = "text"
+    status: Literal["processando", "pronto", "erro"] = "processando"
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class EducationSnapshot(AtlasModel):
     tracks_ativas: list[StudyTrack] = Field(default_factory=list)
     sessoes_recentes: list[StudySession] = Field(default_factory=list)
     competencias: list[Competency] = Field(default_factory=list)
     notas_recentes: list[StudyNote] = Field(default_factory=list)
+    proximos_capitulos: list[StudyChapter] = Field(default_factory=list)
+    capitulos_pendentes: int = 0
+    quizzes_abertos: int = 0
     minutos_semana: int = 0
     areas: list[str] = Field(default_factory=list)
 

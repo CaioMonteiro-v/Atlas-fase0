@@ -367,6 +367,61 @@ CREATE TABLE IF NOT EXISTS study_notes (
 CREATE INDEX IF NOT EXISTS idx_study_notes_track ON study_notes (track_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_study_notes_user ON study_notes (user_id, created_at DESC);
 
+-- Capítulos da trilha (aula viva — Cap. 70/72)
+CREATE TABLE IF NOT EXISTS study_chapters (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    track_id      TEXT NOT NULL,
+    order_index   INTEGER NOT NULL,
+    title         TEXT NOT NULL,
+    summary       TEXT NOT NULL DEFAULT '',
+    objectives    TEXT NOT NULL DEFAULT '[]',  -- JSON array
+    status        TEXT NOT NULL DEFAULT 'pendente'
+                  CHECK (status IN ('pendente', 'em_progresso', 'concluido')),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_chapters_track ON study_chapters (track_id, order_index);
+
+-- Quizzes de checagem (Cap. 79 — evidência de competência)
+CREATE TABLE IF NOT EXISTS study_quizzes (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    track_id      TEXT NOT NULL,
+    chapter_id    TEXT,
+    title         TEXT NOT NULL,
+    questions     TEXT NOT NULL DEFAULT '[]',  -- JSON: [{id, pergunta, opcoes?, resposta_esperada, explicacao}]
+    answers       TEXT NOT NULL DEFAULT '[]',  -- JSON: [{question_id, resposta, correto?, feedback}]
+    score         REAL,                        -- 0..1
+    status        TEXT NOT NULL DEFAULT 'aberto'
+                  CHECK (status IN ('aberto', 'corrigido')),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE,
+    FOREIGN KEY (chapter_id) REFERENCES study_chapters (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_quizzes_track ON study_quizzes (track_id, created_at DESC);
+
+-- Materiais da trilha → nós do grafo (Cap. 71/117)
+CREATE TABLE IF NOT EXISTS study_materials (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    track_id      TEXT NOT NULL,
+    node_id       TEXT,              -- knowledge_nodes.id (Documento)
+    title         TEXT NOT NULL,
+    formato       TEXT NOT NULL DEFAULT 'text',
+    status        TEXT NOT NULL DEFAULT 'processando'
+                  CHECK (status IN ('processando', 'pronto', 'erro')),
+    created_at    TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE,
+    FOREIGN KEY (node_id) REFERENCES knowledge_nodes (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_materials_track ON study_materials (track_id, created_at DESC);
+
 -- ---------------------------------------------------------------------
 -- Domínio Gabinete Inteligente (Cap. 97–105)
 -- Cidadão no centro: demandas, linha do tempo, agenda.

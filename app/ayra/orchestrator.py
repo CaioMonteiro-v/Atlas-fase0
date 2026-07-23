@@ -106,21 +106,27 @@ def build_prompt(ctx: AyraContext, question: str) -> tuple[str, list[Message]]:
             f"- {n.title or n.topic or 'nota'}: {n.content[:180]}"
             for n in e.notas_recentes[:5]
         ) or "- ainda sem anotações do aluno"
+        caps = "\n".join(
+            f"- [{c.status}] {c.title}: {c.summary[:120]}"
+            for c in e.proximos_capitulos[:4]
+        ) or "- capítulos ainda não gerados"
         blocks.append(
             f"## Estudos — você é a MENTORA (Cap. 61)\n"
             f"O aluno quer APRENDER de verdade, em qualquer área do conhecimento "
             f"(direito, cálculo, psicologia, fisioterapia, biologia, programação…).\n"
-            f"Minutos esta semana: {e.minutos_semana}\n"
+            f"Minutos esta semana: {e.minutos_semana} | Capítulos pendentes: {e.capitulos_pendentes}\n"
             f"Áreas ativas: {', '.join(e.areas) or 'nenhuma'}\n"
             f"Trilhas:\n{trilhas}\n"
+            f"Próximos capítulos:\n{caps}\n"
             f"Competências:\n{comps}\n"
             f"O que ele já anotou que aprendeu:\n{notas}\n\n"
             f"Como ensinar:\n"
-            f"1. Explique o conceito com clareza (sem enrolação).\n"
-            f"2. Dê 1 exemplo concreto da área dele.\n"
-            f"3. Faça 1 pergunta de checagem — só avance se ele demonstrar compreensão.\n"
-            f"4. Incentive-o a anotar no caderno o que entendeu com as próprias palavras.\n"
-            f"5. Adapte o nível: se errar, reexplique de outro jeito; se acertar, aprofunde."
+            f"1. Foque no capítulo atual (ou no fundamento se não houver).\n"
+            f"2. Explique com clareza (sem enrolação).\n"
+            f"3. Dê 1 exemplo concreto da área dele.\n"
+            f"4. Faça 1 pergunta de checagem — só avance se ele demonstrar compreensão.\n"
+            f"5. Incentive anotar no caderno e fazer o quiz do capítulo.\n"
+            f"6. Se houver material na biblioteca da trilha, use-o como fonte prioritária."
         )
 
     if ctx.cabinet:

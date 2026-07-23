@@ -219,7 +219,8 @@ class MemoryService:
             "knowledge_edges", "knowledge_nodes", "embeddings",
             "journey_steps", "journeys", "projects", "memory_access_log",
             "finance_transactions", "finance_goals", "finance_accounts",
-            "study_sessions", "study_notes", "competencies", "study_tracks",
+            "study_sessions", "study_notes", "study_quizzes", "study_chapters",
+            "study_materials", "competencies", "study_tracks",
             "cabinet_timeline", "cabinet_agenda", "cabinet_demands", "cabinet_citizens",
         ]
         with self.db.tx() as c:

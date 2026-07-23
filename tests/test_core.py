@@ -349,6 +349,39 @@ def test_cabinet() -> None:
     check("timeline do cidadão", len(cab.list_timeline(U, citizen_id=cid.id)) >= 1)
 
 
+def test_education_chapters_quiz() -> None:
+    print("\n[11] Capítulos + quiz + competência")
+    import asyncio
+
+    from app.domain.models import StudyTrack
+    from app.education.mentor import StudyMentor
+    from app.llm.fake import FakeLLM
+    from app.memory.service import MemoryService
+
+    db = make_db()
+    mem = MemoryService(db, FakeLLM())
+    mentor = StudyMentor(mem, FakeLLM())
+    track = mem.education.create_track(StudyTrack(
+        user_id=U, title="Psicologia cognitiva", subject_area="Psicologia",
+        goal="entender memória de trabalho", level="iniciante",
+    ))
+
+    chapters = asyncio.run(mentor.generate_chapters(U, track.id))
+    check("gerou capítulos", len(chapters) >= 4)
+    chapters2 = asyncio.run(mentor.generate_chapters(U, track.id))
+    check("não duplica capítulos", len(chapters2) == len(chapters))
+
+    quiz = asyncio.run(mentor.generate_quiz(U, track.id, chapter_id=chapters[0].id))
+    check("quiz tem perguntas", len(quiz.questions) >= 2)
+
+    graded = asyncio.run(mentor.grade_quiz(U, quiz.id, [
+        {"question_id": q.id, "resposta": "explicação do aluno"} for q in quiz.questions
+    ]))
+    check("quiz corrigido", graded.status == "corrigido" and graded.score is not None)
+    comps = mem.education.list_competencies(U)
+    check("competência registrada após quiz", len(comps) >= 1)
+
+
 if __name__ == "__main__":
     test_conversational()
     test_personal()
@@ -360,5 +393,6 @@ if __name__ == "__main__":
     test_pdf_extract()
     test_education_general()
     test_cabinet()
+    test_education_chapters_quiz()
     print("\nTodos os testes passaram.\n")
 

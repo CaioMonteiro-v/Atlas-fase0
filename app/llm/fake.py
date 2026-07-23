@@ -71,8 +71,9 @@ class FakeLLM(LLM):
         return out
 
     async def extract(self, system: str, text: str, schema: type[T]) -> T:
-        # Planejamento de jornada: devolve um plano útil sem rede.
-        if schema.__name__ == "JourneyPlan":
+        name = schema.__name__
+
+        if name == "JourneyPlan":
             goal = "evoluir no objetivo declarado"
             for line in text.splitlines():
                 if line.lower().startswith("objetivo declarado:"):
@@ -89,4 +90,59 @@ class FakeLLM(LLM):
                     {"title": "Revisar e ajustar", "description": "Medir, cortar o que não serve, seguir."},
                 ],
             )
-        return schema()  # campos com default_factory=list
+
+        if name == "ChapterPlan":
+            tema = "o tema"
+            for line in text.splitlines():
+                if line.lower().startswith("tema:"):
+                    tema = line.split(":", 1)[1].strip() or tema
+            return schema(chapters=[
+                {"title": f"Fundamentos de {tema}", "summary": "Conceitos essenciais.", "objectives": ["definir", "reconhecer"]},
+                {"title": "Estrutura e princípios", "summary": "Como se organiza.", "objectives": ["mapear", "relacionar"]},
+                {"title": "Aplicação prática", "summary": "Casos e exemplos.", "objectives": ["aplicar"]},
+                {"title": "Erros comuns", "summary": "Armadilhas e como evitar.", "objectives": ["diagnosticar"]},
+                {"title": "Aprofundamento", "summary": "Nuances e debate.", "objectives": ["analisar"]},
+                {"title": "Revisão e checagem", "summary": "Consolidar.", "objectives": ["explicar com próprias palavras"]},
+            ])
+
+        if name == "PlannedQuiz":
+            return schema(
+                title="Checagem de compreensão",
+                questions=[
+                    {
+                        "id": "q1",
+                        "pergunta": "Explique o conceito central com suas palavras.",
+                        "opcoes": [],
+                        "resposta_esperada": "Definição clara do fundamento",
+                        "explicacao": "Foque no o quê e no porquê.",
+                    },
+                    {
+                        "id": "q2",
+                        "pergunta": "Dê um exemplo prático desse conceito.",
+                        "opcoes": [],
+                        "resposta_esperada": "Exemplo concreto e pertinente",
+                        "explicacao": "Exemplo genérico demais não basta.",
+                    },
+                    {
+                        "id": "q3",
+                        "pergunta": "Qual o erro mais comum de quem está começando?",
+                        "opcoes": [],
+                        "resposta_esperada": "Identificar uma armadilha real",
+                        "explicacao": "Mostre consciência do limite.",
+                    },
+                ],
+            )
+
+        if name == "QuizGradeResult":
+            return schema(
+                itens=[
+                    {"question_id": "q1", "correto": True, "feedback": "Boa explicação."},
+                    {"question_id": "q2", "correto": True, "feedback": "Exemplo ok."},
+                    {"question_id": "q3", "correto": False, "feedback": "Faltou o erro típico."},
+                ],
+                competencia_sugerida="Compreensão fundamental",
+                nivel_sugerido="praticar",
+            )
+
+        return schema()
+
