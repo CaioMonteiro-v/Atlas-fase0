@@ -74,9 +74,12 @@ Regra de dependência: **cada camada só importa a de baixo**. `memory/` não sa
 - **Onboarding em 60s** (`POST /chat/onboard`) — objetivo → jornada planejada → sessão
 - **Chat amarrado à jornada** (`journey_id` no `/chat`)
 - **Domínio Educação** — estudo GERAL (matemática, direito, medicina, programação, concursos, idiomas…)
+  - Capítulos + quiz + caderno + competências
+  - Revisão espaçada (SM-2), plano semanal, progresso visual, simulado multi-capítulo
+  - Material da trilha com OCR de PDF escaneado (Gemini)
 - **Domínio Financeiro**: contas, lançamentos, metas e saúde (Cap. 82–92)
 - **Domínio Gabinete**: cidadãos, demandas, linha do tempo e agenda (Cap. 97–105)
-- **Biblioteca com PDF** (`.txt`, `.md`, `.pdf` via pypdf)
+- **Biblioteca com PDF** (`.txt`, `.md`, `.pdf` via pypdf + OCR)
 - **Dashboard, auditoria, export e wipe** na UI (Caps. 31 / 127)
 - Planejamento de jornada pela Ayra (`POST /journeys/{id}/plan`)
 
@@ -84,8 +87,7 @@ Regra de dependência: **cada camada só importa a de baixo**. `memory/` não sa
 
 1. Usar de verdade e ajustar o que a Ayra erra no dia a dia.
 2. Auth multi-usuário (JWT) quando sair do uso single-user.
-3. OCR para PDF escaneado (hoje só texto extraível).
-4. Postgres + pgvector quando o SQLite apertar.
+3. Postgres + pgvector quando o SQLite apertar.
 
 ## Decisões que valem defender
 

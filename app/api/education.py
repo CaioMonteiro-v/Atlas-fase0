@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
-from app.api.deps import get_ingestor, get_memory, get_planner, get_study_mentor
+from app.api.deps import get_ingestor, get_llm, get_memory, get_planner, get_study_mentor
 from app.ayra.orchestrator import JourneyPlanner
 from app.core.security import current_user_id
 from app.domain.models import (
@@ -16,6 +16,7 @@ from app.domain.models import (
     PersonalMemory,
     Privacy,
     QuizSubmit,
+    ReviewGrade,
     StartStudyWithAyra,
     StudyMaterial,
     StudyNote,
@@ -24,11 +25,14 @@ from app.domain.models import (
     StudySessionCreate,
     StudyTrack,
     StudyTrackCreate,
+    StudyWeeklyPlan,
+    StudyWeeklyPlanCreate,
     new_id,
     utcnow,
 )
 from app.education.mentor import StudyMentor
 from app.knowledge.ingest import DocumentIngestor
+from app.llm.base import LLM
 from app.memory.service import MemoryService
 
 router = APIRouter(prefix="/education", tags=["educacao"])
@@ -384,21 +388,23 @@ async def upload_material(
     user_id: str = Depends(current_user_id),
     memory: MemoryService = Depends(get_memory),
     ingestor: DocumentIngestor = Depends(get_ingestor),
+    llm: LLM = Depends(get_llm),
 ):
-    """PDF/txt/md da trilha → grafo. A Ayra passa a ensinar a partir desse material."""
-    from app.knowledge.extract import extract_text_from_bytes
+    """PDF/txt/md da trilha → grafo. PDF escaneado usa OCR (Gemini)."""
+    from app.knowledge.extract import extract_document
 
     track = memory.education.get_track(user_id, track_id)
     if not track:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "trilha não encontrada")
 
     raw = await file.read()
-    if len(raw) > 8_000_000:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "arquivo acima de 8 MB")
+    if len(raw) > 12_000_000:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "arquivo acima de 12 MB")
 
     title = file.filename or f"material-{track.title}"
+    ocr_fn = llm.ocr if hasattr(llm, "ocr") else None
     try:
-        text, fmt = extract_text_from_bytes(title, raw)
+        text, fmt = await extract_document(title, raw, ocr=ocr_fn)
     except ValueError as exc:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
 
@@ -430,8 +436,96 @@ async def upload_material(
             memory.education.update_material(user_id, mat.id, status="erro")
 
     background.add_task(_run)
+    aviso = "Material sendo estruturado no grafo. Em instantes a Ayra poderá usá-lo."
+    if fmt == "pdf-ocr":
+        aviso = "PDF escaneado lido via OCR. " + aviso
     return {
         **mat.model_dump(mode="json"),
         "caracteres": len(text),
-        "aviso": "Material sendo estruturado no grafo. Em instantes a Ayra poderá usá-lo.",
+        "aviso": aviso,
     }
+
+
+# --------------------------------------------------------------- progresso
+@router.get("/tracks/{track_id}/progress")
+def track_progress(
+    track_id: str,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    progress = memory.education.track_progress(user_id, track_id)
+    if not progress:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "trilha não encontrada")
+    return progress.model_dump(mode="json")
+
+
+# ----------------------------------------------------------------- simulado
+@router.post("/tracks/{track_id}/simulado")
+async def create_simulado(
+    track_id: str,
+    user_id: str = Depends(current_user_id),
+    mentor: StudyMentor = Depends(get_study_mentor),
+):
+    try:
+        quiz = await mentor.generate_simulado(user_id, track_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return quiz.model_dump(mode="json")
+
+
+# ---------------------------------------------------------- revisão espaçada
+@router.get("/reviews/due")
+def list_due_reviews(
+    track_id: str | None = None,
+    limit: int = 30,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    cards = memory.education.list_due_reviews(user_id, track_id=track_id, limit=limit)
+    return [c.model_dump(mode="json") for c in cards]
+
+
+@router.post("/reviews/{card_id}/grade")
+def grade_review(
+    card_id: str,
+    body: ReviewGrade,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    updated = memory.education.grade_review(user_id, card_id, body.rating)
+    if not updated:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "cartão não encontrado")
+    return updated.model_dump(mode="json")
+
+
+# ------------------------------------------------------------- plano semanal
+@router.get("/weekly-plan")
+def get_weekly_plan(
+    track_id: str | None = None,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    return memory.education.weekly_plan_status(user_id, track_id=track_id)
+
+
+@router.put("/weekly-plan")
+def put_weekly_plan(
+    body: StudyWeeklyPlanCreate,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    if body.track_id and not memory.education.get_track(user_id, body.track_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "trilha não encontrada")
+    week = memory.education.monday_of()
+    plan = memory.education.upsert_weekly_plan(
+        StudyWeeklyPlan(
+            user_id=user_id,
+            track_id=body.track_id,
+            week_start=week,
+            target_minutes=body.target_minutes,
+            target_sessions=body.target_sessions,
+        )
+    )
+    status_now = memory.education.weekly_plan_status(user_id, track_id=body.track_id)
+    return {**status_now, "plan": plan.model_dump(mode="json")}
+

@@ -422,6 +422,49 @@ CREATE TABLE IF NOT EXISTS study_materials (
 
 CREATE INDEX IF NOT EXISTS idx_study_materials_track ON study_materials (track_id, created_at DESC);
 
+-- Revisão espaçada (Cap. 78)
+CREATE TABLE IF NOT EXISTS study_review_cards (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    track_id        TEXT NOT NULL,
+    note_id         TEXT,
+    chapter_id      TEXT,
+    prompt          TEXT NOT NULL,
+    answer          TEXT NOT NULL DEFAULT '',
+    ease            REAL NOT NULL DEFAULT 2.5,
+    interval_days   INTEGER NOT NULL DEFAULT 1,
+    repetitions     INTEGER NOT NULL DEFAULT 0,
+    next_review_at  TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE,
+    FOREIGN KEY (note_id) REFERENCES study_notes (id) ON DELETE SET NULL,
+    FOREIGN KEY (chapter_id) REFERENCES study_chapters (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_reviews_due
+    ON study_review_cards (user_id, next_review_at);
+CREATE INDEX IF NOT EXISTS idx_study_reviews_track
+    ON study_review_cards (track_id, next_review_at);
+
+-- Plano semanal de estudo
+CREATE TABLE IF NOT EXISTS study_weekly_plans (
+    id               TEXT PRIMARY KEY,
+    user_id          TEXT NOT NULL,
+    track_id         TEXT,
+    week_start       TEXT NOT NULL,
+    target_minutes   INTEGER NOT NULL DEFAULT 180,
+    target_sessions  INTEGER NOT NULL DEFAULT 3,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_study_weekly
+    ON study_weekly_plans (user_id, week_start, IFNULL(track_id, ''));
+
+CREATE INDEX IF NOT EXISTS idx_study_weekly_user ON study_weekly_plans (user_id, week_start DESC);
+
 -- ---------------------------------------------------------------------
 -- Domínio Gabinete Inteligente (Cap. 97–105)
 -- Cidadão no centro: demandas, linha do tempo, agenda.

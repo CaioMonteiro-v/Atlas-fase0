@@ -774,18 +774,23 @@ $("#btn-add-goal").addEventListener("click", async () => {
 
 // ---------- education (estudo geral + mentora Ayra) ----------
 async function loadEducation() {
-  const [snap, tracks, comps, notes] = await Promise.all([
+  const [snap, tracks, comps, notes, due, week] = await Promise.all([
     api("/education/snapshot"),
     api("/education/tracks"),
     api("/education/competencies"),
     api("/education/notes?limit=30"),
+    api("/education/reviews/due?limit=20"),
+    api("/education/weekly-plan"),
   ]);
   $("#edu-summary").innerHTML = [
     ["Trilhas", snap.tracks_ativas?.length ?? 0],
     ["Capítulos pendentes", snap.capitulos_pendentes ?? 0],
-    ["Quizzes abertos", snap.quizzes_abertos ?? 0],
+    ["Revisões vencidas", snap.revisoes_vencidas ?? due.length ?? 0],
     ["Minutos / semana", snap.minutos_semana ?? 0],
   ].map(([k, v]) => `<div class="stat"><span>${k}</span><b>${escapeHtml(String(v))}</b></div>`).join("");
+
+  renderWeeklyPlan(week);
+  renderDueReviews(due);
 
   const tBox = $("#edu-tracks");
   tBox.innerHTML = tracks.length ? "" : '<p class="muted">Nenhuma trilha ainda. Digite o que quer aprender acima.</p>';
@@ -846,6 +851,69 @@ async function loadEducation() {
   if (state.selectedTrack) {
     const t = tracks.find((x) => x.id === state.selectedTrack);
     if (t) await renderTrackDetail(t);
+  } else {
+    $("#edu-progress").hidden = true;
+  }
+}
+
+function renderWeeklyPlan(week) {
+  const box = $("#edu-week");
+  const pct = week?.pct_minutes ?? 0;
+  box.innerHTML = `
+    <h2>Plano da semana</h2>
+    <p class="muted">Semana de ${escapeHtml(week?.week_start || "—")} · meta ${week?.target_minutes ?? 180} min / ${week?.target_sessions ?? 3} sessões</p>
+    <div class="progress is-thick"><span style="width:${pct}%"></span></div>
+    <p class="muted" style="margin-top:6px">${week?.minutes_done ?? 0} min feitos · ${week?.sessions_done ?? 0} sessões</p>
+    <div class="actions" style="margin-top:10px">
+      <button type="button" class="ghost" id="btn-set-week">Ajustar meta</button>
+    </div>`;
+  $("#btn-set-week")?.addEventListener("click", async () => {
+    const data = await openModal("Meta semanal de estudo", `
+      <label>Minutos alvo<input name="target_minutes" type="number" min="30" max="2000" value="${week?.target_minutes ?? 180}"></label>
+      <label>Sessões alvo<input name="target_sessions" type="number" min="1" max="21" value="${week?.target_sessions ?? 3}"></label>
+      <p class="muted">Vale para a semana atual (segunda → domingo).</p>`);
+    if (!data) return;
+    await api("/education/weekly-plan", {
+      method: "PUT",
+      body: JSON.stringify({
+        target_minutes: Number(data.target_minutes) || 180,
+        target_sessions: Number(data.target_sessions) || 3,
+        track_id: state.selectedTrack || null,
+      }),
+    });
+    await loadEducation();
+  });
+}
+
+function renderDueReviews(due) {
+  const box = $("#edu-reviews");
+  if (!due.length) {
+    box.innerHTML = `<h2>Revisão espaçada</h2><p class="muted">Nada vencido. Anotações viram cartões automaticamente.</p>`;
+    return;
+  }
+  box.innerHTML = `<h2>Revisão espaçada · ${due.length} vencida(s)</h2>`;
+  for (const card of due.slice(0, 8)) {
+    const el = document.createElement("div");
+    el.className = "review-card";
+    el.innerHTML = `
+      <strong>${escapeHtml(card.prompt)}</strong>
+      <p class="muted" style="margin:6px 0 0">Resposta (sua anotação): ${escapeHtml(card.answer || "—")}</p>
+      <div class="review-actions">
+        <button type="button" class="ghost" data-g="again">De novo</button>
+        <button type="button" class="ghost" data-g="hard">Difícil</button>
+        <button type="button" class="primary" data-g="good">Bom</button>
+        <button type="button" class="ghost" data-g="easy">Fácil</button>
+      </div>`;
+    el.querySelectorAll("[data-g]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await api(`/education/reviews/${card.id}/grade`, {
+          method: "POST",
+          body: JSON.stringify({ rating: btn.dataset.g }),
+        });
+        await loadEducation();
+      });
+    });
+    box.append(el);
   }
 }
 
@@ -855,10 +923,27 @@ async function openTrack(track) {
 }
 
 async function renderTrackDetail(track) {
-  const [chapters, materials] = await Promise.all([
+  const [chapters, materials, progress] = await Promise.all([
     api(`/education/tracks/${track.id}/chapters`),
     api(`/education/tracks/${track.id}/materials`),
+    api(`/education/tracks/${track.id}/progress`),
   ]);
+
+  const prog = $("#edu-progress");
+  prog.hidden = false;
+  const map = (progress.chapters || []).map((ch) => {
+    const cls = ch.status === "concluido" ? "is-done" : (ch.status === "em_progresso" ? "is-now" : "");
+    return `<span class="chapter-dot ${cls}" title="${escapeHtml(ch.title)}">${ch.order_index + 1}</span>`;
+  }).join("");
+  prog.innerHTML = `
+    <h2>Progresso · ${escapeHtml(track.title)}</h2>
+    <p class="muted">${progress.chapters_done}/${progress.chapters_total} capítulos · ${progress.chapters_pct}% · ${progress.reviews_due} revisões · ${progress.minutes_week} min esta semana</p>
+    <div class="progress is-thick"><span style="width:${progress.chapters_pct || 0}%"></span></div>
+    <div class="chapter-map">${map || '<span class="muted">Sem mapa ainda</span>'}</div>
+    <div class="actions" style="margin-top:8px">
+      <button type="button" class="primary" id="btn-simulado">Simulado da trilha</button>
+    </div>`;
+  $("#btn-simulado")?.addEventListener("click", () => runSimulado(track.id, track.title));
 
   const chBox = $("#edu-chapters");
   if (!chapters.length) {
@@ -918,9 +1003,10 @@ async function renderTrackDetail(track) {
     <form id="mat-form" class="inline-form" style="margin-bottom:10px">
       <input type="file" id="mat-file" accept=".txt,.md,.pdf,application/pdf" required>
       <button type="submit" class="primary">Enviar material</button>
-    </form>`;
+    </form>
+    <p class="muted" style="margin-bottom:8px">PDF escaneado? O Atlas tenta OCR automático.</p>`;
   if (!materials.length) {
-    mBox.insertAdjacentHTML("beforeend", '<p class="muted">Nenhum material. Envie a apostila/PDF desta trilha.</p>');
+    mBox.insertAdjacentHTML("beforeend", '<p class="muted">Nenhum material ainda.</p>');
   }
   for (const m of materials) {
     const el = document.createElement("div");
@@ -954,13 +1040,21 @@ async function runQuiz(trackId, chapterId, label) {
   const q = chapterId
     ? await api(`/education/tracks/${trackId}/quizzes?chapter_id=${chapterId}`, { method: "POST" })
     : await api(`/education/tracks/${trackId}/quizzes`, { method: "POST" });
+  await takeQuiz(q, `Quiz: ${label}`);
+}
 
+async function runSimulado(trackId, label) {
+  const q = await api(`/education/tracks/${trackId}/simulado`, { method: "POST" });
+  await takeQuiz(q, `Simulado: ${label}`);
+}
+
+async function takeQuiz(q, title) {
   const fields = (q.questions || []).map((qq, i) => `
     <label>${i + 1}. ${escapeHtml(qq.pergunta)}
       <textarea name="a_${qq.id}" rows="2" required placeholder="Sua resposta"></textarea>
     </label>`).join("");
 
-  const data = await openModal(`Quiz: ${label}`, fields || "<p>Sem perguntas</p>", { okLabel: "Enviar" });
+  const data = await openModal(title, fields || "<p>Sem perguntas</p>", { okLabel: "Enviar" });
   if (!data) return;
 
   const answers = (q.questions || []).map((qq) => ({

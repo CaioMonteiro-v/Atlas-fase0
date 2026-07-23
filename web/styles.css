@@ -336,6 +336,65 @@ button:disabled { opacity: .45; cursor: default; }
   display: block; height: 100%; background: linear-gradient(90deg, var(--teal), var(--gold));
   transition: width .5s ease;
 }
+.progress.is-thick { height: 10px; margin: 8px 0 0; }
+
+.edu-panel {
+  background: rgba(255,255,255,0.7);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  animation: edu-in .45s ease both;
+}
+.edu-panel h2 {
+  margin: 0 0 8px;
+  font-family: var(--font-brand);
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+}
+.edu-panel .week-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 12px;
+  align-items: end;
+}
+.chapter-map {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 4px;
+}
+.chapter-dot {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  display: grid; place-items: center;
+  font-size: 0.75rem; font-weight: 600;
+  color: var(--ink-soft);
+  background: #fff;
+  transition: transform .2s ease, background .25s ease, border-color .25s ease;
+}
+.chapter-dot.is-done {
+  background: rgba(31, 122, 76, 0.14);
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.chapter-dot.is-now {
+  background: rgba(13, 92, 99, 0.16);
+  border-color: var(--teal);
+  color: var(--teal-deep);
+  transform: scale(1.08);
+}
+.review-card {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+.review-card:first-of-type { border-top: 0; padding-top: 4px; }
+.review-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+@keyframes edu-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
 
 .detail-pane {
   background: rgba(255,255,255,0.72);

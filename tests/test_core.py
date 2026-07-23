@@ -258,11 +258,13 @@ def test_session_journey_bind() -> None:
 
 def test_pdf_extract() -> None:
     print("\n[8] Extração de PDF")
+    import asyncio
     from io import BytesIO
 
     from pypdf import PdfWriter
 
-    from app.knowledge.extract import extract_text_from_bytes
+    from app.knowledge.extract import extract_document, extract_text_from_bytes
+    from app.llm.fake import FakeLLM
 
     text, fmt = extract_text_from_bytes(
         "nota.md",
@@ -274,11 +276,15 @@ def test_pdf_extract() -> None:
     writer.add_blank_page(width=200, height=200)
     buf = BytesIO()
     writer.write(buf)
+    blank = buf.getvalue()
     try:
-        extract_text_from_bytes("vazio.pdf", buf.getvalue())
-        check("PDF sem texto deveria falhar", False)
+        extract_text_from_bytes("vazio.pdf", blank)
+        check("PDF sem texto deveria falhar sem OCR", False)
     except ValueError:
-        check("PDF sem texto extraível é rejeitado", True)
+        check("PDF sem texto extraível é rejeitado sem OCR", True)
+
+    ocr_text, ocr_fmt = asyncio.run(extract_document("vazio.pdf", blank, ocr=FakeLLM().ocr))
+    check("OCR fake recupera PDF escaneado", ocr_fmt == "pdf-ocr" and "OCR" in ocr_text)
 
 
 def test_education_general() -> None:
@@ -382,6 +388,65 @@ def test_education_chapters_quiz() -> None:
     check("competência registrada após quiz", len(comps) >= 1)
 
 
+def test_study_mature_pack() -> None:
+    print("\n[12] Revisão + plano semanal + progresso + simulado")
+    import asyncio
+    from datetime import timedelta
+
+    from app.domain.models import StudyNote, StudySession, StudyTrack, StudyWeeklyPlan, utcnow
+    from app.education.mentor import StudyMentor
+    from app.llm.fake import FakeLLM
+    from app.memory.service import MemoryService
+
+    db = make_db()
+    mem = MemoryService(db, FakeLLM())
+    mentor = StudyMentor(mem, FakeLLM())
+    track = mem.education.create_track(StudyTrack(
+        user_id=U, title="Biologia celular", subject_area="Biologia",
+        goal="entender organelas", level="iniciante",
+    ))
+    chapters = asyncio.run(mentor.generate_chapters(U, track.id))
+    mem.education.set_chapter_status(U, chapters[0].id, "concluido")
+    mem.education.add_session(StudySession(
+        user_id=U, track_id=track.id, minutes=40, notes="mitocôndria",
+    ))
+    note = mem.education.create_note(StudyNote(
+        user_id=U, track_id=track.id, title="Mitocôndria",
+        topic="organelas", content="Produz ATP via respiração celular.",
+    ))
+    # cartão nasce com next_review amanhã — força vencido
+    cards = mem.education.list_due_reviews(U)
+    check("cartão ainda não venceu (amanhã)", len(cards) == 0)
+    with mem.education.db.tx() as c:
+        c.execute(
+            "UPDATE study_review_cards SET next_review_at = ? WHERE note_id = ?",
+            ((utcnow() - timedelta(hours=1)).isoformat(), note.id),
+        )
+    due = mem.education.list_due_reviews(U)
+    check("revisão vencida aparece", len(due) == 1)
+    graded = mem.education.grade_review(U, due[0].id, "good")
+    check("SM-2 avança intervalo", graded is not None and graded.interval_days >= 1)
+
+    week = mem.education.monday_of()
+    mem.education.upsert_weekly_plan(StudyWeeklyPlan(
+        user_id=U, track_id=None, week_start=week,
+        target_minutes=120, target_sessions=2,
+    ))
+    status = mem.education.weekly_plan_status(U)
+    check("plano semanal tem progresso", status["minutes_done"] >= 40)
+    check("pct minutos calculado", status["pct_minutes"] > 0)
+
+    prog = mem.education.track_progress(U, track.id)
+    check("progresso % capítulos", prog is not None and prog.chapters_pct > 0)
+    check("mapa de capítulos", len(prog.chapters) == len(chapters))
+
+    sim = asyncio.run(mentor.generate_simulado(U, track.id))
+    check("simulado criado", sim.title.lower().startswith("simulado") and len(sim.questions) >= 2)
+
+    snap = mem.education.snapshot(U)
+    check("snapshot traz revisões e plano", snap.plano_semana is not None)
+
+
 if __name__ == "__main__":
     test_conversational()
     test_personal()
@@ -394,5 +459,6 @@ if __name__ == "__main__":
     test_education_general()
     test_cabinet()
     test_education_chapters_quiz()
+    test_study_mature_pack()
     print("\nTodos os testes passaram.\n")
 

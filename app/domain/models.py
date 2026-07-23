@@ -538,10 +538,65 @@ class EducationSnapshot(AtlasModel):
     competencias: list[Competency] = Field(default_factory=list)
     notas_recentes: list[StudyNote] = Field(default_factory=list)
     proximos_capitulos: list[StudyChapter] = Field(default_factory=list)
+    revisoes_vencidas: int = 0
+    plano_semana: dict[str, Any] | None = None
     capitulos_pendentes: int = 0
     quizzes_abertos: int = 0
     minutos_semana: int = 0
     areas: list[str] = Field(default_factory=list)
+
+
+class StudyReviewCard(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str
+    note_id: str | None = None
+    chapter_id: str | None = None
+    prompt: str
+    answer: str = ""
+    ease: float = 2.5
+    interval_days: int = 1
+    repetitions: int = 0
+    next_review_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ReviewGrade(BaseModel):
+    rating: Literal["again", "hard", "good", "easy"] = "good"
+
+
+class StudyWeeklyPlan(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str | None = None
+    week_start: str  # YYYY-MM-DD (segunda)
+    target_minutes: int = 180
+    target_sessions: int = 3
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class StudyWeeklyPlanCreate(BaseModel):
+    target_minutes: int = Field(default=180, ge=30, le=2000)
+    target_sessions: int = Field(default=3, ge=1, le=21)
+    track_id: str | None = None
+
+
+class TrackProgress(AtlasModel):
+    track_id: str
+    title: str
+    subject_area: str
+    chapters_total: int = 0
+    chapters_done: int = 0
+    chapters_pct: float = 0.0
+    notes: int = 0
+    quizzes: int = 0
+    quiz_avg_score: float | None = None
+    materials: int = 0
+    reviews_due: int = 0
+    minutes_week: int = 0
+    chapters: list[StudyChapter] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------

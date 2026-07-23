@@ -47,6 +47,17 @@ Gere 3 a 5 perguntas sobre o tema/capítulo.
 Português do Brasil. Sem pegadinhas.
 """
 
+SIMULADO_SYSTEM = """Você é a Ayra montando um SIMULADO (prova geral) da trilha.
+
+Gere 8 a 12 perguntas cobrindo VÁRIOS capítulos — não foque em um só.
+- Misture abertas e no máximo 2 múltipla escolha.
+- Cobertura ampla: fundamentos + aplicação + armadilhas.
+- resposta_esperada e explicacao obrigatórias.
+- title deve começar com "Simulado:".
+
+Português do Brasil. Nível sério de prova, sem pegadinhas injustas.
+"""
+
 GRADE_SYSTEM = """Você corrige as respostas de um aluno com justiça e clareza.
 
 Para cada pergunta, diga se está correto (compreensão suficiente, não precisa ser idêntico)
@@ -157,6 +168,47 @@ class StudyMentor:
             track_id=track_id,
             chapter_id=chapter.id if chapter else None,
             title=planned.title or (f"Checagem: {chapter.title}" if chapter else f"Checagem: {track.title}"),
+            questions=questions,
+        )
+        return self.memory.education.create_quiz(quiz)
+
+    async def generate_simulado(self, user_id: str, track_id: str) -> StudyQuiz:
+        track = self.memory.education.get_track(user_id, track_id)
+        if not track:
+            raise ValueError("trilha não encontrada")
+
+        chapters = self.memory.education.list_chapters(user_id, track_id)
+        ch_txt = "\n".join(
+            f"- {c.order_index + 1}. {c.title}: {c.summary}" for c in chapters
+        ) or "(sem capítulos — cubra o tema geral)"
+        notes = self.memory.education.list_notes(user_id, track_id=track_id, limit=8)
+        notes_txt = "\n".join(f"- {n.title}: {n.content[:100]}" for n in notes) or "(sem anotações)"
+
+        brief = (
+            f"Tema: {track.title} ({track.subject_area})\n"
+            f"Nível: {track.level}\n"
+            f"Objetivo: {track.goal or 'compreensão real'}\n"
+            f"Capítulos:\n{ch_txt}\n"
+            f"Anotações do aluno:\n{notes_txt}\n"
+        )
+        planned = await self.llm.extract(SIMULADO_SYSTEM, brief, PlannedQuiz)
+        questions = planned.questions or [
+            QuizQuestion(
+                pergunta=f"Explique o fio condutor de {track.title} do começo ao fim.",
+                resposta_esperada="Visão integrada dos fundamentos",
+                explicacao="Mostre conexão entre os capítulos.",
+            )
+        ]
+        for q in questions:
+            if not q.id:
+                q.id = new_id()
+
+        quiz = StudyQuiz(
+            user_id=user_id,
+            track_id=track_id,
+            chapter_id=None,
+            title=planned.title if (planned.title or "").startswith("Simulado")
+            else f"Simulado: {track.title}",
             questions=questions,
         )
         return self.memory.education.create_quiz(quiz)

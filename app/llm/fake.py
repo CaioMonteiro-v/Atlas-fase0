@@ -146,3 +146,11 @@ class FakeLLM(LLM):
 
         return schema()
 
+    async def ocr(self, data: bytes, mime: str = "application/pdf") -> str:
+        """OCR fake para testes — devolve texto mínimo reconhecível."""
+        return (
+            "Texto OCR de teste extraído de PDF escaneado. "
+            "Conceito de juros compostos e princípios constitucionais "
+            "para validar o pipeline do Atlas."
+        )
+

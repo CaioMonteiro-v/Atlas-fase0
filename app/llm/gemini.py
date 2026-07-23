@@ -178,6 +178,39 @@ class GeminiLLM(LLM):
         raw = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"])
         return schema.model_validate_json(raw)
 
+    async def ocr(self, data: bytes, mime: str = "application/pdf") -> str:
+        """Lê PDF/imagem escaneada via multimodal Gemini."""
+        import base64
+
+        if len(data) > 12_000_000:
+            raise ValueError("arquivo grande demais para OCR (máx. ~12 MB)")
+        payload = {
+            "contents": [{
+                "role": "user",
+                "parts": [
+                    {
+                        "inline_data": {
+                            "mime_type": mime,
+                            "data": base64.b64encode(data).decode("ascii"),
+                        }
+                    },
+                    {
+                        "text": (
+                            "Extraia TODO o texto legível deste documento. "
+                            "Preserve a ordem de leitura. "
+                            "Não resuma — transcreva. "
+                            "Se houver fórmulas, descreva-as em texto. "
+                            "Responda só com o texto extraído."
+                        )
+                    },
+                ],
+            }],
+            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 8192},
+        }
+        result = await self._post(f"models/{self._model}:generateContent", payload)
+        parts = result["candidates"][0]["content"]["parts"]
+        return "".join(p.get("text", "") for p in parts)
+
 
 def _to_gemini_schema(schema: type[BaseModel]) -> dict[str, Any]:
     """Converte o JSON Schema do Pydantic para o subconjunto aceito pelo Gemini

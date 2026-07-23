@@ -21,8 +21,11 @@ from app.domain.models import (
     StudyMaterial,
     StudyNote,
     StudyQuiz,
+    StudyReviewCard,
     StudySession,
     StudyTrack,
+    StudyWeeklyPlan,
+    TrackProgress,
     QuizAnswer,
     QuizQuestion,
     utcnow,
@@ -166,7 +169,7 @@ class EducationStore:
         return next((c for c in self.list_competencies(user_id) if c.id == comp_id), None)
 
     # ----------------------------------------------------------------- notes
-    def create_note(self, note: StudyNote) -> StudyNote:
+    def create_note(self, note: StudyNote, *, make_review: bool = True) -> StudyNote:
         with self.db.tx() as c:
             own = c.execute(
                 "SELECT id FROM study_tracks WHERE id = ? AND user_id = ?",
@@ -187,6 +190,18 @@ class EducationStore:
             c.execute(
                 "UPDATE study_tracks SET updated_at = ? WHERE id = ? AND user_id = ?",
                 (_iso(utcnow()), note.track_id, note.user_id),
+            )
+        if make_review and (note.content or "").strip():
+            label = (note.title or note.topic or "o que você anotou").strip()
+            self.create_review_card(
+                StudyReviewCard(
+                    user_id=note.user_id,
+                    track_id=note.track_id,
+                    note_id=note.id,
+                    prompt=f"O que você aprendeu sobre «{label}»?",
+                    answer=note.content.strip(),
+                    next_review_at=utcnow() + timedelta(days=1),
+                )
             )
         return note
 
@@ -374,6 +389,223 @@ class EducationStore:
         ).fetchall()
         return [self._to_material(r) for r in rows]
 
+    # -------------------------------------------------------- revisão espaçada
+    def create_review_card(self, card: StudyReviewCard) -> StudyReviewCard:
+        with self.db.tx() as c:
+            c.execute(
+                """INSERT INTO study_review_cards
+                   (id, user_id, track_id, note_id, chapter_id, prompt, answer,
+                    ease, interval_days, repetitions, next_review_at, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    card.id, card.user_id, card.track_id, card.note_id, card.chapter_id,
+                    card.prompt, card.answer, card.ease, card.interval_days, card.repetitions,
+                    _iso(card.next_review_at), _iso(card.created_at), _iso(card.updated_at),
+                ),
+            )
+        return card
+
+    def list_due_reviews(
+        self, user_id: str, *, track_id: str | None = None, limit: int = 30
+    ) -> list[StudyReviewCard]:
+        now = _iso(utcnow())
+        sql = "SELECT * FROM study_review_cards WHERE user_id = ? AND next_review_at <= ?"
+        params: list[Any] = [user_id, now]
+        if track_id:
+            sql += " AND track_id = ?"
+            params.append(track_id)
+        sql += " ORDER BY next_review_at ASC LIMIT ?"
+        params.append(limit)
+        rows = self.db.connect().execute(sql, params).fetchall()
+        return [self._to_review(r) for r in rows]
+
+    def count_due_reviews(self, user_id: str, track_id: str | None = None) -> int:
+        now = _iso(utcnow())
+        if track_id:
+            r = self.db.connect().execute(
+                """SELECT COUNT(*) AS n FROM study_review_cards
+                   WHERE user_id = ? AND track_id = ? AND next_review_at <= ?""",
+                (user_id, track_id, now),
+            ).fetchone()
+        else:
+            r = self.db.connect().execute(
+                """SELECT COUNT(*) AS n FROM study_review_cards
+                   WHERE user_id = ? AND next_review_at <= ?""",
+                (user_id, now),
+            ).fetchone()
+        return int(r["n"])
+
+    def get_review_card(self, user_id: str, card_id: str) -> StudyReviewCard | None:
+        r = self.db.connect().execute(
+            "SELECT * FROM study_review_cards WHERE id = ? AND user_id = ?",
+            (card_id, user_id),
+        ).fetchone()
+        return self._to_review(r) if r else None
+
+    def grade_review(self, user_id: str, card_id: str, rating: str) -> StudyReviewCard | None:
+        card = self.get_review_card(user_id, card_id)
+        if not card:
+            return None
+        ease = card.ease
+        interval = card.interval_days
+        reps = card.repetitions
+
+        if rating == "again":
+            reps = 0
+            interval = 1
+            ease = max(1.3, ease - 0.2)
+        elif rating == "hard":
+            interval = max(1, round(interval * 1.2))
+            ease = max(1.3, ease - 0.15)
+            reps += 1
+        elif rating == "easy":
+            if reps == 0:
+                interval = 4
+            elif reps == 1:
+                interval = 10
+            else:
+                interval = max(1, round(interval * ease * 1.3))
+            ease = min(3.0, ease + 0.15)
+            reps += 1
+        else:  # good
+            if reps == 0:
+                interval = 1
+            elif reps == 1:
+                interval = 6
+            else:
+                interval = max(1, round(interval * ease))
+            reps += 1
+
+        now = utcnow()
+        next_at = now + timedelta(days=interval)
+        with self.db.tx() as c:
+            c.execute(
+                """UPDATE study_review_cards
+                   SET ease = ?, interval_days = ?, repetitions = ?,
+                       next_review_at = ?, updated_at = ?
+                   WHERE id = ? AND user_id = ?""",
+                (ease, interval, reps, _iso(next_at), _iso(now), card_id, user_id),
+            )
+        return self.get_review_card(user_id, card_id)
+
+    # ---------------------------------------------------------- plano semanal
+    @staticmethod
+    def monday_of(dt: datetime | None = None) -> str:
+        d = (dt or utcnow()).date()
+        return (d - timedelta(days=d.weekday())).isoformat()
+
+    def upsert_weekly_plan(self, plan: StudyWeeklyPlan) -> StudyWeeklyPlan:
+        existing = self.get_weekly_plan(plan.user_id, plan.week_start, plan.track_id)
+        now = utcnow()
+        if existing:
+            with self.db.tx() as c:
+                c.execute(
+                    """UPDATE study_weekly_plans
+                       SET target_minutes = ?, target_sessions = ?, updated_at = ?
+                       WHERE id = ? AND user_id = ?""",
+                    (plan.target_minutes, plan.target_sessions, _iso(now), existing.id, plan.user_id),
+                )
+            existing.target_minutes = plan.target_minutes
+            existing.target_sessions = plan.target_sessions
+            existing.updated_at = now
+            return existing
+        plan.created_at = now
+        plan.updated_at = now
+        with self.db.tx() as c:
+            c.execute(
+                """INSERT INTO study_weekly_plans
+                   (id, user_id, track_id, week_start, target_minutes, target_sessions,
+                    created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    plan.id, plan.user_id, plan.track_id, plan.week_start,
+                    plan.target_minutes, plan.target_sessions,
+                    _iso(plan.created_at), _iso(plan.updated_at),
+                ),
+            )
+        return plan
+
+    def get_weekly_plan(
+        self, user_id: str, week_start: str, track_id: str | None = None
+    ) -> StudyWeeklyPlan | None:
+        if track_id:
+            r = self.db.connect().execute(
+                """SELECT * FROM study_weekly_plans
+                   WHERE user_id = ? AND week_start = ? AND track_id = ?""",
+                (user_id, week_start, track_id),
+            ).fetchone()
+        else:
+            r = self.db.connect().execute(
+                """SELECT * FROM study_weekly_plans
+                   WHERE user_id = ? AND week_start = ? AND track_id IS NULL""",
+                (user_id, week_start),
+            ).fetchone()
+        return self._to_weekly(r) if r else None
+
+    def weekly_plan_status(
+        self, user_id: str, *, track_id: str | None = None
+    ) -> dict[str, Any]:
+        week = self.monday_of()
+        plan = self.get_weekly_plan(user_id, week, track_id)
+        start = datetime.fromisoformat(week)
+        # sessions usam utcnow() (aware); week_start é data ingênua
+        if start.tzinfo is None and utcnow().tzinfo is not None:
+            start = start.replace(tzinfo=utcnow().tzinfo)
+        end = start + timedelta(days=7)
+        sessions = [
+            s for s in self.list_sessions(user_id, track_id=track_id, limit=200)
+            if s.occurred_at and start <= s.occurred_at < end
+        ]
+        minutes = sum(s.minutes for s in sessions)
+        n_sess = len(sessions)
+        target_m = plan.target_minutes if plan else 180
+        target_s = plan.target_sessions if plan else 3
+        return {
+            "week_start": week,
+            "plan": plan.model_dump(mode="json") if plan else None,
+            "target_minutes": target_m,
+            "target_sessions": target_s,
+            "minutes_done": minutes,
+            "sessions_done": n_sess,
+            "pct_minutes": min(100.0, round(100 * minutes / max(1, target_m), 1)),
+            "pct_sessions": min(100.0, round(100 * n_sess / max(1, target_s), 1)),
+        }
+
+    # ------------------------------------------------------------- progresso
+    def track_progress(self, user_id: str, track_id: str) -> TrackProgress | None:
+        track = self.get_track(user_id, track_id)
+        if not track:
+            return None
+        chapters = self.list_chapters(user_id, track_id)
+        done = sum(1 for c in chapters if c.status == "concluido")
+        total = len(chapters)
+        quizzes = self.list_quizzes(user_id, track_id)
+        scored = [q.score for q in quizzes if q.score is not None]
+        week = self.monday_of()
+        start = datetime.fromisoformat(week)
+        if start.tzinfo is None and utcnow().tzinfo is not None:
+            start = start.replace(tzinfo=utcnow().tzinfo)
+        end = start + timedelta(days=7)
+        minutes = sum(
+            s.minutes for s in self.list_sessions(user_id, track_id=track_id, limit=200)
+            if s.occurred_at and start <= s.occurred_at < end
+        )
+        return TrackProgress(
+            track_id=track.id,
+            title=track.title,
+            subject_area=track.subject_area,
+            chapters_total=total,
+            chapters_done=done,
+            chapters_pct=round(100 * done / total, 1) if total else 0.0,
+            notes=len(self.list_notes(user_id, track_id=track_id, limit=500)),
+            quizzes=len(quizzes),
+            quiz_avg_score=round(sum(scored) / len(scored), 2) if scored else None,
+            materials=len(self.list_materials(user_id, track_id)),
+            reviews_due=self.count_due_reviews(user_id, track_id),
+            minutes_week=minutes,
+            chapters=chapters,
+        )
+
     # -------------------------------------------------------------- snapshot
     def snapshot(self, user_id: str) -> EducationSnapshot:
         tracks = self.list_tracks(user_id, status="ativa")
@@ -398,6 +630,8 @@ class EducationStore:
             competencias=comps,
             notas_recentes=notes,
             proximos_capitulos=proximos,
+            revisoes_vencidas=self.count_due_reviews(user_id),
+            plano_semana=self.weekly_plan_status(user_id),
             capitulos_pendentes=self.count_pending_chapters(user_id),
             quizzes_abertos=self.count_open_quizzes(user_id),
             minutos_semana=sum(s.minutes for s in week_sessions),
@@ -464,4 +698,28 @@ class EducationStore:
             id=r["id"], user_id=r["user_id"], track_id=r["track_id"], node_id=r["node_id"],
             title=r["title"], formato=r["formato"], status=r["status"],
             created_at=_dt(r["created_at"]),
+        )
+
+    @staticmethod
+    def _to_review(r: sqlite3.Row) -> StudyReviewCard:
+        return StudyReviewCard(
+            id=r["id"], user_id=r["user_id"], track_id=r["track_id"],
+            note_id=r["note_id"], chapter_id=r["chapter_id"],
+            prompt=r["prompt"], answer=r["answer"] or "",
+            ease=float(r["ease"]), interval_days=int(r["interval_days"]),
+            repetitions=int(r["repetitions"]),
+            next_review_at=_dt(r["next_review_at"]) or utcnow(),
+            created_at=_dt(r["created_at"]) or utcnow(),
+            updated_at=_dt(r["updated_at"]) or utcnow(),
+        )
+
+    @staticmethod
+    def _to_weekly(r: sqlite3.Row) -> StudyWeeklyPlan:
+        return StudyWeeklyPlan(
+            id=r["id"], user_id=r["user_id"], track_id=r["track_id"],
+            week_start=r["week_start"],
+            target_minutes=int(r["target_minutes"]),
+            target_sessions=int(r["target_sessions"]),
+            created_at=_dt(r["created_at"]) or utcnow(),
+            updated_at=_dt(r["updated_at"]) or utcnow(),
         )
