@@ -229,12 +229,126 @@ class Project(AtlasModel):
 
 
 # --------------------------------------------------------------------------
+# Domínio Financeiro (Cap. 82–92)
+# --------------------------------------------------------------------------
+FinanceAccountKind = Literal["corrente", "poupanca", "investimento", "carteira", "cartao", "outro"]
+FinanceTxKind = Literal["receita", "despesa", "transferencia"]
+FinanceGoalStatus = Literal["ativa", "concluida", "pausada", "abandonada"]
+
+
+class FinanceAccount(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    name: str
+    kind: FinanceAccountKind = "corrente"
+    currency: str = "BRL"
+    balance: float = 0.0
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class FinanceAccountCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    kind: FinanceAccountKind = "corrente"
+    currency: str = "BRL"
+    balance: float = 0.0
+
+
+class FinanceTransaction(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    account_id: str
+    kind: FinanceTxKind
+    amount: float = Field(gt=0)
+    category: str = "geral"
+    description: str = ""
+    occurred_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class FinanceTransactionCreate(BaseModel):
+    account_id: str
+    kind: FinanceTxKind
+    amount: float = Field(gt=0)
+    category: str = "geral"
+    description: str = ""
+    occurred_at: datetime | None = None
+
+
+class FinanceGoal(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    journey_id: str | None = None
+    title: str
+    target_amount: float = Field(gt=0)
+    current_amount: float = 0.0
+    deadline: datetime | None = None
+    status: FinanceGoalStatus = "ativa"
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+    @property
+    def progress(self) -> float:
+        if self.target_amount <= 0:
+            return 0.0
+        return round(min(1.0, self.current_amount / self.target_amount), 2)
+
+
+class FinanceGoalCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    target_amount: float = Field(gt=0)
+    current_amount: float = 0.0
+    deadline: datetime | None = None
+    journey_id: str | None = None
+
+
+class FinanceHealth(AtlasModel):
+    """Cap. 92 — indicadores de saúde financeira (calculados, não persistidos)."""
+
+    patrimonio: float = 0.0
+    receita_mes: float = 0.0
+    despesa_mes: float = 0.0
+    poupanca_mes: float = 0.0
+    taxa_poupanca: float = 0.0          # 0..1
+    comprometimento: float = 0.0        # despesa / receita, 0..n
+    reserva_meses: float | None = None  # patrimônio líquido / despesa média
+    metas_ativas: int = 0
+    progresso_metas: float = 0.0
+
+
+class FinanceSnapshot(AtlasModel):
+    """Resumo que a Ayra injeta no contexto quando o domínio financeiro importa."""
+
+    health: FinanceHealth
+    contas: list[FinanceAccount] = Field(default_factory=list)
+    metas: list[FinanceGoal] = Field(default_factory=list)
+    recentes: list[FinanceTransaction] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# Planejamento de jornada pela Ayra (Cap. 20, Etapa 3)
+# --------------------------------------------------------------------------
+class PlannedStep(BaseModel):
+    title: str
+    description: str = ""
+
+
+class JourneyPlan(BaseModel):
+    real_goal: str
+    diagnosis: dict[str, Any] = Field(default_factory=dict)
+    steps: list[PlannedStep] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
 # Contexto que a Ayra monta antes de falar (Cap. 115 — ponto único de entrada)
 # --------------------------------------------------------------------------
 class AyraContext(AtlasModel):
     personal: list[PersonalMemory] = Field(default_factory=list)
     knowledge: list[SearchHit] = Field(default_factory=list)
     journey: Journey | None = None
+    finance: FinanceSnapshot | None = None
     history: list[Turn] = Field(default_factory=list)
 
     def sources(self) -> list[dict[str, str]]:
@@ -244,4 +358,10 @@ class AyraContext(AtlasModel):
         out += [{"tipo": "conhecimento", "id": h.node.id, "rotulo": h.node.title} for h in self.knowledge]
         if self.journey:
             out.append({"tipo": "jornada", "id": self.journey.id, "rotulo": self.journey.title})
+        if self.finance:
+            out.append({
+                "tipo": "financas",
+                "id": "snapshot",
+                "rotulo": f"patrimônio R$ {self.finance.health.patrimonio:,.2f}",
+            })
         return out

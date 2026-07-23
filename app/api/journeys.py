@@ -5,7 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_ingestor, get_memory
+from app.api.deps import get_ingestor, get_memory, get_planner
+from app.ayra.orchestrator import JourneyPlanner
 from app.core.security import current_user_id
 from app.domain.models import Journey, JourneyCreate, JourneyStep
 from app.knowledge.ingest import DocumentIngestor
@@ -106,6 +107,29 @@ def update_step(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "passo não encontrado")
     j = memory.journeys.get(user_id, journey_id)
     return {"progress": j.progress if j else 0.0}
+
+
+@router.post("/journeys/{journey_id}/plan")
+async def plan_journey(
+    journey_id: str,
+    user_id: str = Depends(current_user_id),
+    planner: JourneyPlanner = Depends(get_planner),
+):
+    """Cap. 20 Etapa 3 — a Ayra descobre o objetivo real, diagnostica e monta os passos."""
+    journey = await planner.plan(user_id, journey_id)
+    if not journey:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "jornada não encontrada")
+    return {**journey.model_dump(mode="json"), "progress": journey.progress}
+
+
+@router.delete("/journeys/{journey_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_journey(
+    journey_id: str,
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    if not memory.journeys.delete(user_id, journey_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "jornada não encontrada")
 
 
 # --------------------------------------------------------------------------

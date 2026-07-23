@@ -13,6 +13,7 @@ import logging
 
 from app.core.db import Database
 from app.domain.models import AyraContext
+from app.finance.store import FinanceStore
 from app.llm.base import LLM
 from app.memory.store import (
     AuditStore,
@@ -24,6 +25,13 @@ from app.memory.store import (
 
 log = logging.getLogger("atlas.memory")
 
+_FINANCE_HINTS = (
+    "financ", "dinheiro", "orçamento", "orcamento", "salário", "salario",
+    "despesa", "receita", "investir", "investimento", "dívida", "divida",
+    "reserva", "patrimônio", "patrimonio", "meta financeira", "poupar",
+    "gast", "conta banc", "fluxo de caixa",
+)
+
 
 class MemoryService:
     def __init__(self, db: Database, llm: LLM) -> None:
@@ -33,6 +41,7 @@ class MemoryService:
         self.personal = PersonalStore(db)
         self.knowledge = KnowledgeStore(db)
         self.journeys = JourneyStore(db)
+        self.finance = FinanceStore(db)
         self.audit = AuditStore(db)
 
     async def build_context(
@@ -72,17 +81,33 @@ class MemoryService:
                 user_id, question, query_embedding=query_vec, model=model, top_k=knowledge_hits
             )
 
+        # Finanças: só injeta quando a pergunta (ou a jornada ativa) pede.
+        # Evita poluir o contexto de uma conversa sobre Excel com o extrato.
+        finance = None
+        q = question.lower()
+        wants_finance = any(h in q for h in _FINANCE_HINTS) or (
+            journey is not None and journey.domain == "financas"
+        )
+        if wants_finance and self.finance.list_accounts(user_id):
+            finance = self.finance.snapshot(user_id)
+            self.audit.log(user_id, "read", "finance_snapshot", "snapshot",
+                           session_id, "contexto financeiro")
+
         for m in personal:
             self.audit.log(user_id, "read", "personal_memory", m.id, session_id, "contexto da resposta")
         for h in hits:
             self.audit.log(user_id, "read", "knowledge_node", h.node.id, session_id, "contexto da resposta")
 
-        return AyraContext(personal=personal, knowledge=hits, journey=journey, history=history)
+        return AyraContext(
+            personal=personal, knowledge=hits, journey=journey,
+            finance=finance, history=history,
+        )
 
     # ---------------------------------------------------------- Cap. 31 / 128
     def export_all(self, user_id: str) -> dict:
         """A memória pertence ao usuário. Exportar tem que ser trivial —
         e o formato tem que ser legível fora do Atlas."""
+        snap = self.finance.snapshot(user_id)
         return {
             "usuario": user_id,
             "memoria_pessoal": [m.model_dump(mode="json") for m in self.personal.list(user_id, limit=10_000)],
@@ -99,6 +124,12 @@ class MemoryService:
                     (user_id,),
                 ).fetchall()
             ],
+            "financas": {
+                "contas": [a.model_dump(mode="json") for a in snap.contas],
+                "metas": [{**g.model_dump(mode="json"), "progress": g.progress} for g in snap.metas],
+                "saude": snap.health.model_dump(mode="json"),
+                "lancamentos": [t.model_dump(mode="json") for t in self.finance.list_transactions(user_id, limit=10_000)],
+            },
         }
 
     def wipe(self, user_id: str) -> dict[str, int]:
@@ -108,6 +139,7 @@ class MemoryService:
             "conversational_turns", "sessions", "personal_memories",
             "knowledge_edges", "knowledge_nodes", "embeddings",
             "journey_steps", "journeys", "projects", "memory_access_log",
+            "finance_transactions", "finance_goals", "finance_accounts",
         ]
         with self.db.tx() as c:
             for t in tables:

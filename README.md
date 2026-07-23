@@ -1,6 +1,7 @@
-# Atlas / Ayra — Fase 0
+# Atlas / Ayra — Fase 1
 
-Núcleo de memória portátil, do usuário, independente de modelo.
+Plataforma de inteligência: a **Ayra** é o ponto único de entrada; o **Atlas**
+conecta memória, jornadas, conhecimento e o Domínio Financeiro.
 
 ## Rodar em 3 minutos
 
@@ -13,7 +14,7 @@ uvicorn app.main:app --reload
 
 | Endereço | O que é |
 |---|---|
-| http://localhost:8000 | **console da Ayra** (é aqui que você conversa) |
+| http://localhost:8000 | **plataforma Atlas** (Ayra, jornadas, memória, biblioteca, finanças) |
 | http://localhost:8000/docs | API inteira, testável no navegador |
 | http://localhost:8000/health | checagem rápida |
 
@@ -30,14 +31,15 @@ quebrar só quando você já estiver esperando uma resposta na tela.
 ```
 app/
   core/       infraestrutura: config, banco, schema.sql, auth
-  domain/     modelos (Pydantic) — a única definição de "o que é uma memória"
+  domain/     modelos (Pydantic) — memória, jornadas, finanças
   memory/     as 4 camadas + busca híbrida + fachada MemoryService
+  finance/    Domínio Financeiro (contas, lançamentos, metas, saúde)
   llm/        contrato + adaptador Gemini + adaptador fake
   knowledge/  ingestão de documentos -> grafo
-  ayra/       orquestração: contexto, prompt, consolidação
-  api/        HTTP: chat (SSE), memória, jornadas, conhecimento
-web/          console mínimo para testar o streaming
-tests/        teste de integração do núcleo
+  ayra/       orquestração: contexto, prompt, consolidação, planejamento
+  api/        HTTP: chat (SSE), memória, jornadas, conhecimento, finanças
+web/          plataforma Atlas (Ayra no centro)
+tests/        integração do núcleo + finanças
 ```
 
 Regra de dependência: **cada camada só importa a de baixo**. `memory/` não sabe que existe HTTP.
@@ -56,42 +58,35 @@ Regra de dependência: **cada camada só importa a de baixo**. `memory/` não sa
 | POST | `/memory/wipe` | apagar tudo, de verdade |
 | POST | `/journeys` | criar jornada |
 | POST | `/journeys/{id}/diagnose` | descobrir o objetivo real (Cap. 20) |
+| POST | `/journeys/{id}/plan` | Ayra planeja diagnóstico + passos (Cap. 20) |
 | POST | `/journeys/{id}/steps` | passos da jornada |
 | POST | `/knowledge/ingest` | ingerir documento (roda em background) |
 | GET | `/knowledge/search` | busca híbrida (léxica + semântica) |
 | GET | `/knowledge/{id}/neighbors` | percorrer o grafo |
+| GET | `/finance/health` | indicadores de saúde financeira (Cap. 92) |
+| GET/POST/DELETE | `/finance/accounts` | contas |
+| GET/POST | `/finance/transactions` | lançamentos |
+| GET/POST/PATCH/DELETE | `/finance/goals` | metas financeiras |
 
-## De onde veio cada coisa
+## O que a Fase 1 entregou
 
-| Código antigo | Agora | Motivo |
-|---|---|---|
-| `memory/models.py` (to_dict/from_dict manuais) | `domain/models.py` (Pydantic) | o `from_dict` estourava `TypeError` em toda subclasse |
-| `memory/implementations.py` (InMemory*) | `memory/store.py` (SQLite) | tudo era perdido a cada restart |
-| `memory/memory_manager.py` | `memory/service.py` | ganhou `build_context()`, que é o que faz o produto existir |
-| `llm/openai_adapter.py` (mock embutido) | `llm/gemini.py` + `llm/fake.py` | mock nunca mora dentro do adaptador de produção |
-| `knowledge/document_processor.py` | `knowledge/ingest.py` | não importava `Optional` (NameError), chamava embedding 1 a 1, sem transação |
-| — | `app/api/*` | não existia camada web nenhuma |
-| — | jornadas | eram "a unidade central do Atlas" no PDF e não existiam no código |
+- **Plataforma web** com Ayra, Jornadas, Memória, Biblioteca e Finanças
+- **Domínio Financeiro**: contas, lançamentos, metas e saúde (Cap. 82–92)
+- **Planejamento de jornada pela Ayra** (`POST /journeys/{id}/plan`)
+- Contexto da Ayra enriquecido com snapshot financeiro quando a conversa pede
 
-## Próximos passos, em ordem
+## Próximos passos
 
-1. **Ligar a chave do Gemini e conversar de verdade.** Ver a resposta em streaming
-   com as fontes ao lado é o teste de fumaça do produto inteiro.
-2. **Ingerir 5 documentos seus** e conferir o grafo em `/knowledge/search`.
-   Se a busca híbrida devolve o que faz sentido, o núcleo funciona.
-3. **Frontend real** (React/Vite ou htmx). O `web/index.html` é só um console de teste.
-4. **Módulo Financeiro** como primeiro domínio — ele exercita jornada + memória
-   pessoal + conhecimento ao mesmo tempo, e é o que valida se a arquitetura escala
-   para o segundo domínio sem reescrita.
-5. **Postgres + pgvector** quando o SQLite apertar. O `store.py` é a única coisa que muda.
+1. Ligar a chave do Gemini e conversar de verdade.
+2. Ingerir documentos e conferir o grafo em Biblioteca.
+3. Criar uma jornada financeira e pedir à Ayra para planejar.
+4. Postgres + pgvector quando o SQLite apertar.
+5. Domínio Educação e Gabinete Inteligente (mesma arquitetura de domínio).
 
 ## Decisões que valem defender
 
-- **SQLite antes de Postgres.** Zero infraestrutura, um arquivo, backup é `cp`. O schema
-  foi escrito para migrar sem reescrita.
-- **REST puro no lugar do SDK do Gemini.** Trocar de modelo = escrever um arquivo de 150
-  linhas. Com SDK, é refatorar o projeto.
-- **Busca vetorial em numpy, força bruta.** Até ~50 mil nós, um scan leva milissegundos.
-  Trocar por `sqlite-vec` depois muda só `memory/vector.py`.
-- **`user_id` sempre vem do token.** Nenhuma rota aceita `user_id` no corpo. Se aceitasse,
-  qualquer pessoa leria a memória de qualquer outra.
+- **SQLite antes de Postgres.** Zero infraestrutura, um arquivo, backup é `cp`.
+- **REST puro no lugar do SDK do Gemini.** Trocar de modelo = um arquivo.
+- **Busca vetorial em numpy, força bruta.** Até ~50 mil nós, milissegundos.
+- **`user_id` sempre vem do token.** Nenhuma rota aceita `user_id` no corpo.
+- **Domínios independentes** (Cap. 116): finanças evolui sem reescrever memória.

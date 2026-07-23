@@ -199,10 +199,50 @@ def test_audit() -> None:
     check("motivo gravado", log[0]["reason"] == "montar contexto")
 
 
+def test_finance() -> None:
+    print("\n[6] Domínio Financeiro (Cap. 82–92)")
+    from app.domain.models import FinanceAccount, FinanceGoal, FinanceTransaction
+    from app.finance.store import FinanceStore
+
+    db = make_db()
+    fin = FinanceStore(db)
+
+    acc = fin.create_account(FinanceAccount(
+        user_id=U, name="Corrente", kind="corrente", balance=1000.0,
+    ))
+    check("conta criada com saldo", fin.get_account(U, acc.id).balance == 1000.0)
+    check("outro usuário não vê a conta", fin.get_account(OTHER, acc.id) is None)
+
+    fin.add_transaction(FinanceTransaction(
+        user_id=U, account_id=acc.id, kind="despesa", amount=200.0,
+        category="moradia", description="aluguel",
+    ))
+    fin.add_transaction(FinanceTransaction(
+        user_id=U, account_id=acc.id, kind="receita", amount=500.0,
+        category="salario", description="pagamento",
+    ))
+    got = fin.get_account(U, acc.id)
+    check("saldo atualizado na mesma transação", abs(got.balance - 1300.0) < 0.01)
+
+    goal = fin.create_goal(FinanceGoal(
+        user_id=U, title="Reserva", target_amount=6000.0, current_amount=1500.0,
+    ))
+    check("progresso da meta", abs(goal.progress - 0.25) < 0.01)
+    upd = fin.update_goal_progress(U, goal.id, 6000.0)
+    check("meta conclui ao atingir alvo", upd is not None and upd.status == "concluida")
+
+    health = fin.health(U)
+    check("patrimônio no health", abs(health.patrimonio - 1300.0) < 0.01)
+    check("receita do mês", health.receita_mes >= 500.0)
+    check("despesa do mês", health.despesa_mes >= 200.0)
+    check("snapshot monta contexto", fin.snapshot(U).contas[0].id == acc.id)
+
+
 if __name__ == "__main__":
     test_conversational()
     test_personal()
     test_knowledge_graph()
     test_journeys()
     test_audit()
+    test_finance()
     print("\nTodos os testes passaram.\n")

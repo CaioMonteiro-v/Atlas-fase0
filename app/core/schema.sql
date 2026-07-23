@@ -230,3 +230,60 @@ CREATE TABLE IF NOT EXISTS memory_access_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_user ON memory_access_log (user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------
+-- Domínio Financeiro (Cap. 82–92) — Fase 1
+-- Contas, movimentos e metas. Indicadores de saúde são calculados, não
+-- persistidos: o snapshot muda a cada lançamento.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS finance_accounts (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'corrente'
+                CHECK (kind IN ('corrente', 'poupanca', 'investimento', 'carteira', 'cartao', 'outro')),
+    currency    TEXT NOT NULL DEFAULT 'BRL',
+    balance     REAL NOT NULL DEFAULT 0,
+    privacy     TEXT NOT NULL DEFAULT 'private'
+                CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fin_accounts_user ON finance_accounts (user_id);
+
+CREATE TABLE IF NOT EXISTS finance_transactions (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    account_id  TEXT NOT NULL,
+    kind        TEXT NOT NULL CHECK (kind IN ('receita', 'despesa', 'transferencia')),
+    amount      REAL NOT NULL CHECK (amount > 0),
+    category    TEXT NOT NULL DEFAULT 'geral',
+    description TEXT NOT NULL DEFAULT '',
+    occurred_at TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES finance_accounts (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_fin_tx_user ON finance_transactions (user_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fin_tx_account ON finance_transactions (account_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fin_tx_category ON finance_transactions (user_id, category);
+
+CREATE TABLE IF NOT EXISTS finance_goals (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    journey_id      TEXT,
+    title           TEXT NOT NULL,
+    target_amount   REAL NOT NULL CHECK (target_amount > 0),
+    current_amount  REAL NOT NULL DEFAULT 0 CHECK (current_amount >= 0),
+    deadline        TEXT,
+    status          TEXT NOT NULL DEFAULT 'ativa'
+                    CHECK (status IN ('ativa', 'concluida', 'pausada', 'abandonada')),
+    privacy         TEXT NOT NULL DEFAULT 'private'
+                    CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    FOREIGN KEY (journey_id) REFERENCES journeys (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fin_goals_user ON finance_goals (user_id, status);

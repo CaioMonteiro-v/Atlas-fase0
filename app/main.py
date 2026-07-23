@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import chat, journeys, memory as memory_routes
+from app.api import chat, finance, journeys, memory as memory_routes
 from app.core.config import get_settings
 from app.core.db import Database
 from app.llm.fake import FakeLLM
@@ -74,8 +74,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Atlas / Ayra",
-    version="0.1.0",
-    description="Núcleo de memória portátil e independente de modelo.",
+    version="0.2.0",
+    description="Plataforma de inteligência: memória, jornadas, conhecimento e finanças — com a Ayra no centro.",
     lifespan=lifespan,
 )
 
@@ -90,6 +90,7 @@ app.add_middleware(
 app.include_router(chat.router)
 app.include_router(memory_routes.router)
 app.include_router(journeys.router)
+app.include_router(finance.router)
 
 
 @app.exception_handler(Exception)

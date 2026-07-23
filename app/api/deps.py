@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from fastapi import Request
 
-from app.ayra.orchestrator import Ayra, Consolidator
+from app.ayra.orchestrator import Ayra, Consolidator, JourneyPlanner
 from app.core.db import Database
 from app.knowledge.ingest import DocumentIngestor
 from app.llm.base import LLM
@@ -38,3 +38,7 @@ def get_consolidator(request: Request) -> Consolidator:
 
 def get_ingestor(request: Request) -> DocumentIngestor:
     return DocumentIngestor(request.app.state.memory, request.app.state.llm)
+
+
+def get_planner(request: Request) -> JourneyPlanner:
+    return JourneyPlanner(request.app.state.memory, request.app.state.llm)
