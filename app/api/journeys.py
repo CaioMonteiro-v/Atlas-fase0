@@ -148,18 +148,26 @@ async def ingest(
     garante timeout no proxy. O cliente recebe a confirmação na hora e consulta
     o grafo depois.
     """
+    from app.knowledge.extract import extract_text_from_bytes
+
     raw = await file.read()
-    if len(raw) > 5_000_000:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "arquivo acima de 5 MB")
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                            "envie texto (.txt/.md). PDF entra na Fase 1.")
+    if len(raw) > 8_000_000:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "arquivo acima de 8 MB")
 
     title = file.filename or "documento"
-    background.add_task(ingestor.ingest, user_id, title, text, {"origem": "upload"})
-    return {"status": "processando", "titulo": title}
+    try:
+        text, fmt = extract_text_from_bytes(title, raw)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
+
+    if len(text.strip()) < 40:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "documento sem conteúdo suficiente")
+
+    background.add_task(
+        ingestor.ingest, user_id, title, text, {"origem": "upload", "formato": fmt}
+    )
+    return {"status": "processando", "titulo": title, "formato": fmt, "caracteres": len(text)}
+
 
 
 @router.get("/knowledge/search")

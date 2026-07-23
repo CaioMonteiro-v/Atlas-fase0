@@ -2,8 +2,9 @@ const API = "";
 const TOKEN = ""; // cole ATLAS_API_TOKEN se configurado
 
 const state = {
-  view: "ayra",
+  view: "home",
   sessionId: null,
+  journeyId: null,
   journeys: [],
   selectedJourney: null,
 };
@@ -27,7 +28,10 @@ async function api(path, opts = {}) {
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  if (!res.ok) throw new Error((data && data.detail) || data?.erro || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const detail = data?.detail || data?.erro || (typeof data === "string" ? data : null);
+    throw new Error(detail || `HTTP ${res.status}`);
+  }
   return data;
 }
 
@@ -37,6 +41,14 @@ function money(n) {
 
 function pct(n) {
   return `${Math.round((n || 0) * 100)}%`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
 // ---------- navigation ----------
@@ -49,6 +61,8 @@ function setView(name) {
     panel.hidden = !on;
   });
   const loaders = {
+    home: loadHome,
+    ayra: () => { refreshJourneySelect(); showWelcomeIfEmpty(); },
     journeys: loadJourneys,
     memory: loadMemory,
     library: () => {},
@@ -58,7 +72,7 @@ function setView(name) {
 }
 
 $$(".nav-item").forEach((btn) => btn.addEventListener("click", () => setView(btn.dataset.view)));
-$(".brand").addEventListener("click", () => setView("ayra"));
+$(".brand").addEventListener("click", () => setView("home"));
 
 // ---------- chat / Ayra ----------
 const logEl = $("#log");
@@ -67,6 +81,8 @@ const form = $("#chat-form");
 const input = $("#msg");
 const send = $("#send");
 const sess = $("#sess");
+const journeySelect = $("#chat-journey");
+const journeyChip = $("#journey-chip");
 
 function showWelcome() {
   logEl.innerHTML = `
@@ -75,6 +91,10 @@ function showWelcome() {
       <p>Conte um objetivo — aprender, organizar finanças, criar um projeto.
       Eu descubro o destino real e construo a jornada com você.</p>
     </div>`;
+}
+
+function showWelcomeIfEmpty() {
+  if (!logEl.querySelector(".msg")) showWelcome();
 }
 
 function bubble(cls, text = "") {
@@ -103,6 +123,35 @@ function renderFontes(lista) {
   }
 }
 
+function renderJourneyChip(j) {
+  if (!j) {
+    journeyChip.hidden = true;
+    return;
+  }
+  journeyChip.hidden = false;
+  journeyChip.innerHTML = `
+    <strong>Jornada na conversa</strong>
+    ${escapeHtml(j.title)} · ${pct(j.progress)}
+    <div class="progress" style="margin-top:8px"><span style="width:${(j.progress || 0) * 100}%"></span></div>`;
+}
+
+async function refreshJourneySelect() {
+  try {
+    state.journeys = await api("/journeys");
+  } catch {
+    state.journeys = [];
+  }
+  const current = state.journeyId || "";
+  journeySelect.innerHTML = '<option value="">sem amarrar</option>' +
+    state.journeys.map((j) =>
+      `<option value="${j.id}" ${j.id === current ? "selected" : ""}>${escapeHtml(j.title)}</option>`
+    ).join("");
+}
+
+journeySelect.addEventListener("change", () => {
+  state.journeyId = journeySelect.value || null;
+});
+
 async function* sseFrom(response) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -125,14 +174,13 @@ async function* sseFrom(response) {
   }
 }
 
-form.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const text = input.value.trim();
-  if (!text) return;
-
+async function sendChat(text, { clearInput = true } = {}) {
+  if (!text?.trim()) return;
   bubble("user", text);
-  input.value = "";
-  input.style.height = "auto";
+  if (clearInput) {
+    input.value = "";
+    input.style.height = "auto";
+  }
   send.disabled = true;
 
   const reply = bubble("ayra");
@@ -142,7 +190,11 @@ form.addEventListener("submit", async (e) => {
     const res = await fetch(`${API}/chat`, {
       method: "POST",
       headers: headers(),
-      body: JSON.stringify({ message: text, session_id: state.sessionId }),
+      body: JSON.stringify({
+        message: text,
+        session_id: state.sessionId,
+        journey_id: state.journeyId || null,
+      }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -155,6 +207,11 @@ form.addEventListener("submit", async (e) => {
         logEl.scrollTop = logEl.scrollHeight;
       } else if (event === "sources") {
         renderFontes(JSON.parse(data));
+      } else if (event === "journey") {
+        const j = JSON.parse(data);
+        state.journeyId = j.id;
+        journeySelect.value = j.id;
+        renderJourneyChip(j);
       } else if (event === "error") {
         bubble("erro", `A Ayra falhou no meio da resposta: ${data}`);
       }
@@ -167,6 +224,11 @@ form.addEventListener("submit", async (e) => {
     send.disabled = false;
     input.focus();
   }
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await sendChat(input.value.trim());
 });
 
 input.addEventListener("input", () => {
@@ -189,6 +251,8 @@ $("#btn-new-session").addEventListener("click", async () => {
   sess.textContent = "sessão nova";
   showWelcome();
   fontesEl.innerHTML = '<p class="muted">As fontes de cada resposta aparecem aqui.</p>';
+  journeyChip.hidden = true;
+  setView("ayra");
 });
 
 // ---------- modal helper ----------
@@ -205,15 +269,15 @@ $("#modal-cancel").addEventListener("click", () => {
 $("#modal-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const data = Object.fromEntries(new FormData($("#modal-form")).entries());
-  // FormData includes dialog buttons; strip them
   delete data.cancel;
   modal.close();
   modalResolve?.(data);
 });
 
-function openModal(title, fieldsHtml) {
+function openModal(title, fieldsHtml, { okLabel = "Salvar" } = {}) {
   modalTitle.textContent = title;
   modalFields.innerHTML = fieldsHtml;
+  $("#modal-ok").textContent = okLabel;
   return new Promise((resolve) => {
     modalResolve = resolve;
     modal.showModal();
@@ -222,13 +286,94 @@ function openModal(title, fieldsHtml) {
   });
 }
 
+// ---------- home / onboarding ----------
+async function loadHome() {
+  const box = $("#home-dash");
+  try {
+    const d = await api("/memory/dashboard");
+    const j = d.jornada_ativa;
+    box.innerHTML = `
+      <div class="home-card">
+        <h3>Jornada ativa</h3>
+        <b>${j ? escapeHtml(j.title) : "Nenhuma"}</b>
+        <p>${j ? `${pct(j.progress)} · ${escapeHtml(j.domain)}` : "Comece com um objetivo abaixo."}</p>
+        ${j ? `<div class="progress"><span style="width:${(j.progress || 0) * 100}%"></span></div>
+          <div class="actions"><button type="button" class="ghost" id="home-open-j">Abrir</button>
+          <button type="button" class="primary" id="home-talk-j">Falar com Ayra</button></div>` : ""}
+      </div>
+      <div class="home-card">
+        <h3>Próximo passo</h3>
+        <b>${d.proximo_passo ? escapeHtml(d.proximo_passo.title) : "—"}</b>
+        <p>${d.jornadas_ativas} ativa(s) · ${d.jornadas_total} no total</p>
+      </div>
+      <div class="home-card">
+        <h3>Memória</h3>
+        <b>${d.memorias}</b>
+        <p>${d.conhecimento_nos} nós no grafo</p>
+      </div>
+      <div class="home-card">
+        <h3>Finanças</h3>
+        <b>${money(d.financas.patrimonio)}</b>
+        <p>Poupança ${pct(d.financas.taxa_poupanca)} · ${d.financas.metas_ativas} meta(s)</p>
+      </div>`;
+    $("#home-open-j")?.addEventListener("click", () => {
+      state.selectedJourney = j.id;
+      setView("journeys");
+      selectJourney(j.id);
+    });
+    $("#home-talk-j")?.addEventListener("click", () => {
+      state.journeyId = j.id;
+      setView("ayra");
+      refreshJourneySelect();
+    });
+  } catch (err) {
+    box.innerHTML = `<p class="muted">Não deu para carregar o painel (${escapeHtml(err.message)}).</p>`;
+  }
+}
+
+$("#onboard-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const goal = $("#onboard-goal").value.trim();
+  const domain = $("#onboard-domain").value;
+  if (!goal) return;
+  const btn = $("#onboard-go");
+  btn.disabled = true;
+  btn.textContent = "Planejando…";
+  try {
+    const data = await api("/chat/onboard", {
+      method: "POST",
+      body: JSON.stringify({ goal, domain }),
+    });
+    state.sessionId = data.session_id;
+    state.journeyId = data.journey.id;
+    state.selectedJourney = data.journey.id;
+    sess.textContent = `sessão ${data.session_id.slice(0, 8)}`;
+    setView("ayra");
+    await refreshJourneySelect();
+    journeySelect.value = data.journey.id;
+    renderJourneyChip({
+      title: data.journey.title,
+      progress: data.journey.progress,
+    });
+    showWelcome();
+    await sendChat(data.mensagem_sugerida, { clearInput: false });
+    $("#onboard-goal").value = "";
+    await loadHome();
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Começar";
+  }
+});
+
 // ---------- journeys ----------
 async function loadJourneys() {
   state.journeys = await api("/journeys");
   const list = $("#journey-list");
   list.innerHTML = "";
   if (!state.journeys.length) {
-    list.innerHTML = '<p class="muted">Nenhuma jornada ainda. Crie a partir de um objetivo.</p>';
+    list.innerHTML = '<p class="muted">Nenhuma jornada ainda. Use o onboarding no Início ou crie aqui.</p>';
     return;
   }
   for (const j of state.journeys) {
@@ -268,6 +413,7 @@ async function selectJourney(id) {
     </div>
     <div class="actions" style="margin-bottom:16px">
       <button type="button" class="primary" id="btn-plan">Ayra, planejar</button>
+      <button type="button" class="ghost" id="btn-talk-journey">Conversar nesta jornada</button>
       <button type="button" class="ghost" id="btn-del-journey">Excluir</button>
     </div>
     <h3 class="section-title">Passos</h3>
@@ -282,6 +428,11 @@ async function selectJourney(id) {
     } catch (err) {
       alert(err.message);
     }
+  });
+  $("#btn-talk-journey")?.addEventListener("click", () => {
+    state.journeyId = id;
+    setView("ayra");
+    refreshJourneySelect();
   });
   $("#btn-del-journey")?.addEventListener("click", async () => {
     if (!confirm("Excluir esta jornada?")) return;
@@ -376,6 +527,44 @@ $("#btn-export").addEventListener("click", async () => {
   a.click();
 });
 
+$("#btn-audit").addEventListener("click", async () => {
+  const panel = $("#audit-panel");
+  panel.hidden = !panel.hidden;
+  if (panel.hidden) return;
+  const items = await api("/memory/audit?limit=40");
+  const box = $("#audit-list");
+  box.innerHTML = items.length ? "" : '<p class="muted">Nenhum acesso registrado ainda.</p>';
+  for (const a of items) {
+    const el = document.createElement("div");
+    el.className = "row";
+    el.style.cursor = "default";
+    el.innerHTML = `
+      <h3>${escapeHtml(a.action)} · ${escapeHtml(a.owner_type)}</h3>
+      <p>${escapeHtml(a.reason || "—")}</p>
+      <div class="meta"><span>${escapeHtml(a.created_at || "")}</span><span>${escapeHtml(a.owner_id?.slice?.(0, 8) || "")}</span></div>`;
+    box.append(el);
+  }
+});
+
+$("#btn-wipe").addEventListener("click", async () => {
+  const data = await openModal("Apagar toda a memória", `
+    <p class="muted">Isso remove jornadas, finanças, conhecimento e conversas deste usuário. Irreversível.</p>
+    <label>Digite <strong>APAGAR TUDO</strong> para confirmar
+      <input name="confirm" required autocomplete="off" placeholder="APAGAR TUDO">
+    </label>`, { okLabel: "Apagar" });
+  if (!data) return;
+  if (data.confirm !== "APAGAR TUDO") {
+    alert("Confirmação inválida.");
+    return;
+  }
+  await api(`/memory/wipe?confirm=${encodeURIComponent("APAGAR TUDO")}`, { method: "POST" });
+  state.sessionId = null;
+  state.journeyId = null;
+  alert("Memória apagada.");
+  await loadMemory();
+  $("#audit-panel").hidden = true;
+});
+
 // ---------- library ----------
 $("#ingest-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -388,12 +577,13 @@ $("#ingest-form").addEventListener("submit", async (e) => {
     headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
     body: fd,
   });
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    alert(`Falha na ingestão: HTTP ${res.status}`);
+    alert(`Falha na ingestão: ${data.detail || res.status}`);
     return;
   }
-  const data = await res.json();
-  $("#library-results").innerHTML = `<div class="row"><h3>Processando</h3><p>${escapeHtml(data.titulo)} — a Ayra está estruturando o grafo em background.</p></div>`;
+  $("#library-results").innerHTML = `<div class="row"><h3>Processando (${escapeHtml(data.formato || "arquivo")})</h3>
+    <p>${escapeHtml(data.titulo)} — ${data.caracteres || "?"} caracteres. O grafo está sendo estruturado em background.</p></div>`;
   $("#ingest-file").value = "";
 });
 
@@ -569,15 +759,7 @@ $("#btn-add-goal").addEventListener("click", async () => {
   await loadFinance();
 });
 
-// ---------- utils / boot ----------
-function escapeHtml(s) {
-  return String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
+// ---------- boot ----------
 async function boot() {
   showWelcome();
   try {
@@ -586,6 +768,8 @@ async function boot() {
   } catch {
     $("#llm-badge").textContent = "offline";
   }
+  await loadHome();
+  await refreshJourneySelect();
 }
 
 boot();

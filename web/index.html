@@ -12,7 +12,7 @@
 <body>
 <div class="app" id="app">
   <aside class="rail" aria-label="Navegação Atlas">
-    <div class="brand" data-view="ayra">
+    <div class="brand" data-view="home">
       <span class="brand-mark" aria-hidden="true"></span>
       <div>
         <strong>Atlas</strong>
@@ -21,7 +21,8 @@
     </div>
 
     <nav class="nav">
-      <button type="button" class="nav-item is-active" data-view="ayra">Ayra</button>
+      <button type="button" class="nav-item is-active" data-view="home">Início</button>
+      <button type="button" class="nav-item" data-view="ayra">Ayra</button>
       <button type="button" class="nav-item" data-view="journeys">Jornadas</button>
       <button type="button" class="nav-item" data-view="memory">Memória</button>
       <button type="button" class="nav-item" data-view="library">Biblioteca</button>
@@ -35,14 +36,48 @@
   </aside>
 
   <main class="stage">
+    <!-- HOME -->
+    <section class="view is-active" id="view-home" data-view-panel="home">
+      <header class="view-head">
+        <div>
+          <p class="eyebrow">Sua evolução</p>
+          <h1>Início</h1>
+        </div>
+      </header>
+      <div id="home-dash" class="home-dash"></div>
+      <form id="onboard-form" class="onboard">
+        <h2>Comece em 60 segundos</h2>
+        <p class="muted">Diga um objetivo. A Ayra descobre o destino real e monta a jornada.</p>
+        <div class="onboard-row">
+          <input id="onboard-goal" name="goal" required maxlength="500"
+                 placeholder="Ex.: quero organizar minhas finanças / aprender inglês / passar em concurso">
+          <select id="onboard-domain" name="domain">
+            <option value="geral">Geral</option>
+            <option value="educacao">Educação</option>
+            <option value="financas">Finanças</option>
+            <option value="gabinete">Gabinete</option>
+          </select>
+          <button type="submit" class="primary" id="onboard-go">Começar</button>
+        </div>
+      </form>
+    </section>
+
     <!-- AYRA -->
-    <section class="view is-active" id="view-ayra" data-view-panel="ayra">
+    <section class="view" id="view-ayra" data-view-panel="ayra" hidden>
       <header class="view-head">
         <div>
           <p class="eyebrow">Inteligência do Atlas</p>
           <h1>Ayra</h1>
         </div>
-        <p class="session-id" id="sess">sessão nova</p>
+        <div class="session-meta">
+          <label class="journey-bind">
+            <span>Jornada</span>
+            <select id="chat-journey">
+              <option value="">sem amarrar</option>
+            </select>
+          </label>
+          <p class="session-id" id="sess">sessão nova</p>
+        </div>
       </header>
 
       <div class="ayra-layout">
@@ -54,9 +89,10 @@
             <button type="submit" id="send">Enviar</button>
           </form>
         </div>
-        <aside class="sources-pane" aria-label="Fontes usadas">
+        <aside class="sources-pane" aria-label="Fontes e contexto">
           <h2>O que a Ayra leu</h2>
           <div id="fontes"><p class="muted">As fontes de cada resposta aparecem aqui.</p></div>
+          <div id="journey-chip" class="journey-chip" hidden></div>
         </aside>
       </div>
     </section>
@@ -86,11 +122,17 @@
           <h1>Memória</h1>
         </div>
         <div class="actions">
+          <button type="button" class="ghost" id="btn-audit">Auditoria</button>
           <button type="button" class="ghost" id="btn-export">Exportar</button>
+          <button type="button" class="ghost danger" id="btn-wipe">Apagar tudo</button>
           <button type="button" class="primary" id="btn-add-memory">Adicionar</button>
         </div>
       </header>
       <div id="memory-list" class="list-stack wide"></div>
+      <div id="audit-panel" class="detail-pane" hidden>
+        <h2 class="section-title">O que a Ayra leu (Cap. 127)</h2>
+        <div id="audit-list" class="list-stack"></div>
+      </div>
     </section>
 
     <!-- BIBLIOTECA -->
@@ -102,9 +144,10 @@
         </div>
       </header>
       <form id="ingest-form" class="inline-form">
-        <input type="file" id="ingest-file" accept=".txt,.md,text/plain,text/markdown" required>
+        <input type="file" id="ingest-file" accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf" required>
         <button type="submit" class="primary">Ingerir</button>
       </form>
+      <p class="muted">Aceita .txt, .md e .pdf (texto extraível).</p>
       <form id="search-form" class="inline-form">
         <input type="search" id="search-q" placeholder="Buscar no grafo…" required>
         <button type="submit" class="ghost">Buscar</button>

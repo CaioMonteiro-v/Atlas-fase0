@@ -60,6 +60,15 @@ class ConversationStore:
                 "SELECT * FROM sessions WHERE id = ? AND user_id = ?", (session_id, user_id)
             ).fetchone()
             if row:
+                # Se a conversa pediu uma jornada e a sessão ainda não tem, amarra agora.
+                if journey_id and not row["journey_id"]:
+                    c.execute(
+                        "UPDATE sessions SET journey_id = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                        (journey_id, _iso(now), session_id, user_id),
+                    )
+                    row = c.execute(
+                        "SELECT * FROM sessions WHERE id = ? AND user_id = ?", (session_id, user_id)
+                    ).fetchone()
                 return self._to_session(row)
             c.execute(
                 """INSERT INTO sessions (id, user_id, journey_id, title, created_at, updated_at)
@@ -67,6 +76,20 @@ class ConversationStore:
                 (session_id, user_id, journey_id, _iso(now), _iso(now)),
             )
         return Session(id=session_id, user_id=user_id, journey_id=journey_id, created_at=now, updated_at=now)
+
+    def get_session(self, user_id: str, session_id: str) -> Session | None:
+        row = self.db.connect().execute(
+            "SELECT * FROM sessions WHERE id = ? AND user_id = ?", (session_id, user_id)
+        ).fetchone()
+        return self._to_session(row) if row else None
+
+    def bind_journey(self, user_id: str, session_id: str, journey_id: str) -> bool:
+        with self.db.tx() as c:
+            cur = c.execute(
+                "UPDATE sessions SET journey_id = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (journey_id, _iso(utcnow()), session_id, user_id),
+            )
+            return cur.rowcount > 0
 
     def add_turn(self, user_id: str, session_id: str, speaker: str, text: str) -> Turn:
         with self.db.tx() as c:

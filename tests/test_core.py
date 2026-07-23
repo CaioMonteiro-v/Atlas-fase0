@@ -238,6 +238,49 @@ def test_finance() -> None:
     check("snapshot monta contexto", fin.snapshot(U).contas[0].id == acc.id)
 
 
+def test_session_journey_bind() -> None:
+    print("\n[7] Chat ↔ jornada")
+    db = make_db()
+    conv = ConversationStore(db)
+    js = JourneyStore(db)
+    j = js.create(Journey(
+        user_id=U, domain="educacao", title="Inglês",
+        stated_goal="aprender inglês", status="ativa",
+    ))
+    s = conv.ensure_session(U, "sess-1", journey_id=j.id)
+    check("sessão nasce amarrada à jornada", s.journey_id == j.id)
+    got = conv.get_session(U, "sess-1")
+    check("get_session devolve journey_id", got is not None and got.journey_id == j.id)
+    conv.ensure_session(U, "sess-2")
+    check("bind posterior funciona", conv.bind_journey(U, "sess-2", j.id))
+    check("sessão 2 amarrada", conv.get_session(U, "sess-2").journey_id == j.id)
+
+
+def test_pdf_extract() -> None:
+    print("\n[8] Extração de PDF")
+    from io import BytesIO
+
+    from pypdf import PdfWriter
+
+    from app.knowledge.extract import extract_text_from_bytes
+
+    text, fmt = extract_text_from_bytes(
+        "nota.md",
+        "Conceito de juros compostos explicado em detalhe para o Atlas.".encode(),
+    )
+    check("texto puro funciona", fmt == "text" and "juros" in text)
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    buf = BytesIO()
+    writer.write(buf)
+    try:
+        extract_text_from_bytes("vazio.pdf", buf.getvalue())
+        check("PDF sem texto deveria falhar", False)
+    except ValueError:
+        check("PDF sem texto extraível é rejeitado", True)
+
+
 if __name__ == "__main__":
     test_conversational()
     test_personal()
@@ -245,4 +288,7 @@ if __name__ == "__main__":
     test_journeys()
     test_audit()
     test_finance()
+    test_session_journey_bind()
+    test_pdf_extract()
     print("\nTodos os testes passaram.\n")
+

@@ -144,6 +144,74 @@ button:disabled { opacity: .45; cursor: default; }
   border-color: var(--line);
 }
 .ghost:hover:not(:disabled) { background: #fff; }
+.ghost.danger { color: var(--danger); border-color: rgba(163, 59, 45, 0.35); }
+
+/* ---------- home / onboard ---------- */
+.home-dash {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.home-card {
+  background: rgba(255,255,255,0.78);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px 18px;
+  animation: fade-up .45s ease both;
+}
+.home-card h3 {
+  margin: 0 0 6px;
+  font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-soft); font-weight: 600;
+}
+.home-card b {
+  display: block;
+  font-family: var(--font-brand);
+  font-size: 1.35rem; letter-spacing: -0.03em;
+}
+.home-card p { margin: 8px 0 0; color: var(--ink-soft); font-size: 0.9rem; }
+.home-card .actions { margin-top: 12px; }
+
+.onboard {
+  background: linear-gradient(135deg, rgba(13,92,99,0.08), rgba(184,137,61,0.08));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  box-shadow: var(--shadow);
+  animation: fade-up .55s .05s ease both;
+}
+.onboard h2 {
+  margin: 0 0 6px;
+  font-family: var(--font-brand);
+  letter-spacing: -0.03em;
+}
+.onboard-row {
+  display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px;
+}
+.onboard-row input {
+  flex: 1; min-width: 220px;
+  border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; font: inherit; background: #fff;
+}
+.onboard-row select {
+  border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; font: inherit; background: #fff;
+}
+
+.session-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.journey-bind {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.78rem; color: var(--ink-soft);
+}
+.journey-bind select {
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 6px 10px; font: inherit; background: #fff; max-width: 220px;
+}
+.journey-chip {
+  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line);
+  font-size: 0.88rem;
+}
+.journey-chip strong { display: block; margin-bottom: 4px; }
 
 /* ---------- Ayra chat ---------- */
 .ayra-layout {

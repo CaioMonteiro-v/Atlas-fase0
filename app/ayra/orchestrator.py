@@ -106,17 +106,23 @@ class Ayra:
         self.llm = llm
 
     async def answer(
-        self, user_id: str, session_id: str, question: str
+        self,
+        user_id: str,
+        session_id: str,
+        question: str,
+        journey_id: str | None = None,
     ) -> AsyncIterator[tuple[str, str]]:
         """Emite ('token', texto) e, ao final, ('sources', json) e ('done', '').
 
         As fontes vão SEMPRE junto com a resposta (Cap. 127): o usuário tem que
         conseguir ver o que a Ayra leu para responder aquilo.
         """
-        self.memory.conversation.ensure_session(user_id, session_id)
+        self.memory.conversation.ensure_session(user_id, session_id, journey_id=journey_id)
         self.memory.conversation.add_turn(user_id, session_id, "user", question)
 
-        ctx = await self.memory.build_context(user_id, session_id, question)
+        ctx = await self.memory.build_context(
+            user_id, session_id, question, journey_id=journey_id
+        )
         system, messages = build_prompt(ctx, question)
 
         buffer: list[str] = []
@@ -136,6 +142,13 @@ class Ayra:
 
         import json as _json
         yield ("sources", _json.dumps(ctx.sources(), ensure_ascii=False))
+        if ctx.journey:
+            yield ("journey", _json.dumps({
+                "id": ctx.journey.id,
+                "title": ctx.journey.title,
+                "progress": ctx.journey.progress,
+                "domain": ctx.journey.domain,
+            }, ensure_ascii=False))
         yield ("done", "")
 
 

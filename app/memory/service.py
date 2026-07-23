@@ -51,9 +51,14 @@ class MemoryService:
         question: str,
         history_turns: int = 12,
         knowledge_hits: int = 5,
+        journey_id: str | None = None,
     ) -> AyraContext:
         history = self.conversation.history(user_id, session_id, limit=history_turns)
-        journey = self.journeys.active(user_id)
+
+        # Preferência: jornada explícita da conversa > sessão amarrada > jornada ativa.
+        session = self.conversation.get_session(user_id, session_id)
+        jid = journey_id or (session.journey_id if session else None)
+        journey = self.journeys.get(user_id, jid) if jid else self.journeys.active(user_id)
 
         # Memória pessoal: as categorias que quase sempre importam. Mandar TUDO
         # para o modelo é o erro clássico — enche a janela e piora a resposta.
@@ -97,11 +102,46 @@ class MemoryService:
             self.audit.log(user_id, "read", "personal_memory", m.id, session_id, "contexto da resposta")
         for h in hits:
             self.audit.log(user_id, "read", "knowledge_node", h.node.id, session_id, "contexto da resposta")
+        if journey:
+            self.audit.log(user_id, "read", "journey", journey.id, session_id, "jornada da conversa")
 
         return AyraContext(
             personal=personal, knowledge=hits, journey=journey,
             finance=finance, history=history,
         )
+
+    def dashboard(self, user_id: str) -> dict:
+        """Resumo da home: progresso, próximo passo, saúde financeira."""
+        journeys = self.journeys.list(user_id)
+        active = [j for j in journeys if j.status == "ativa"]
+        active_j = active[0] if active else None
+        next_step = None
+        if active_j:
+            for s in active_j.steps:
+                if s.status != "concluida":
+                    next_step = {"id": s.id, "title": s.title, "journey_id": active_j.id}
+                    break
+
+        health = self.finance.health(user_id)
+        memories = self.personal.list(user_id, limit=3)
+        nodes = self.knowledge.count_nodes(user_id)
+
+        return {
+            "jornadas_ativas": len(active),
+            "jornadas_total": len(journeys),
+            "jornada_ativa": (
+                {
+                    **active_j.model_dump(mode="json"),
+                    "progress": active_j.progress,
+                }
+                if active_j else None
+            ),
+            "proximo_passo": next_step,
+            "memorias": len(self.personal.list(user_id, limit=10_000)),
+            "memorias_recentes": [m.model_dump(mode="json") for m in memories],
+            "conhecimento_nos": nodes,
+            "financas": health.model_dump(mode="json"),
+        }
 
     # ---------------------------------------------------------- Cap. 31 / 128
     def export_all(self, user_id: str) -> dict:
