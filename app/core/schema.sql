@@ -350,6 +350,23 @@ CREATE TABLE IF NOT EXISTS competencies (
 
 CREATE INDEX IF NOT EXISTS idx_competencies_user ON competencies (user_id, status);
 
+-- Caderno de anotações: o que o aluno registrou que aprendeu (Cap. 61/72).
+CREATE TABLE IF NOT EXISTS study_notes (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    track_id    TEXT NOT NULL,
+    session_id  TEXT,
+    title       TEXT NOT NULL DEFAULT '',
+    content     TEXT NOT NULL,
+    topic       TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_notes_track ON study_notes (track_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_study_notes_user ON study_notes (user_id, created_at DESC);
+
 -- ---------------------------------------------------------------------
 -- Domínio Gabinete Inteligente (Cap. 97–105)
 -- Cidadão no centro: demandas, linha do tempo, agenda.

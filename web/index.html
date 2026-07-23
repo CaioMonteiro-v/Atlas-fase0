@@ -103,28 +103,44 @@
     <section class="view" id="view-education" data-view-panel="education" hidden>
       <header class="view-head">
         <div>
-          <p class="eyebrow">Domínio Educação — qualquer área</p>
+          <p class="eyebrow">Ayra mentora · qualquer área do conhecimento</p>
           <h1>Estudos</h1>
         </div>
-        <div class="actions">
-          <button type="button" class="ghost" id="btn-add-session">Registrar estudo</button>
-          <button type="button" class="ghost" id="btn-add-comp">Competência</button>
-          <button type="button" class="primary" id="btn-add-track">Nova trilha</button>
-        </div>
       </header>
+
+      <form id="study-start-form" class="onboard">
+        <h2>O que você quer aprender?</h2>
+        <p class="muted">Direito Constitucional, Cálculo 1, Psicologia, Fisioterapia, Biologia… qualquer área. A Ayra ensina; você anota o que aprendeu.</p>
+        <div class="onboard-row">
+          <input id="study-topic" required maxlength="200"
+                 placeholder="Ex.: Direito Constitucional">
+          <select id="study-level">
+            <option value="iniciante">iniciante</option>
+            <option value="intermediario">intermediário</option>
+            <option value="avancado">avançado</option>
+          </select>
+          <button type="submit" class="primary" id="study-go">Estudar com a Ayra</button>
+        </div>
+        <input id="study-goal" maxlength="400" style="margin-top:10px;width:100%;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font:inherit;background:#fff"
+               placeholder="Objetivo (opcional): passar na prova, concurso, clínica…">
+      </form>
+
       <div id="edu-summary" class="health-strip"></div>
       <div class="finance-grid">
         <div>
-          <h2 class="section-title">Trilhas ativas</h2>
+          <h2 class="section-title">Suas trilhas</h2>
           <div id="edu-tracks" class="list-stack"></div>
         </div>
         <div>
-          <h2 class="section-title">Competências</h2>
-          <div id="edu-comps" class="list-stack"></div>
+          <h2 class="section-title">Caderno — o que você aprendeu</h2>
+          <div class="actions" style="margin-bottom:10px">
+            <button type="button" class="primary" id="btn-add-note">Nova anotação</button>
+          </div>
+          <div id="edu-notes" class="list-stack"></div>
         </div>
         <div class="span-2">
-          <h2 class="section-title">Sessões recentes</h2>
-          <div id="edu-sessions" class="list-stack"></div>
+          <h2 class="section-title">Competências</h2>
+          <div id="edu-comps" class="list-stack"></div>
         </div>
       </div>
     </section>

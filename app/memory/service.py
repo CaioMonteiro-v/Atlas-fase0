@@ -109,7 +109,8 @@ class MemoryService:
         education = None
         if any(h in q for h in _EDU_HINTS) or domain == "educacao":
             snap = self.education.snapshot(user_id)
-            if snap.tracks_ativas or snap.competencias:
+            # Sempre injeta no domínio educação — a mentora precisa do caderno mesmo no dia 1.
+            if snap.tracks_ativas or snap.competencias or snap.notas_recentes or domain == "educacao":
                 education = snap
                 self.audit.log(user_id, "read", "education_snapshot", "snapshot",
                                session_id, "contexto educacional")
@@ -218,7 +219,7 @@ class MemoryService:
             "knowledge_edges", "knowledge_nodes", "embeddings",
             "journey_steps", "journeys", "projects", "memory_access_log",
             "finance_transactions", "finance_goals", "finance_accounts",
-            "study_sessions", "competencies", "study_tracks",
+            "study_sessions", "study_notes", "competencies", "study_tracks",
             "cabinet_timeline", "cabinet_agenda", "cabinet_demands", "cabinet_citizens",
         ]
         with self.db.tx() as c:

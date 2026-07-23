@@ -102,15 +102,25 @@ def build_prompt(ctx: AyraContext, question: str) -> tuple[str, list[Message]]:
             f"- {c.name} ({c.subject_area}): {c.level} / {c.status}"
             for c in e.competencias[:6]
         ) or "- sem competências registradas"
+        notas = "\n".join(
+            f"- {n.title or n.topic or 'nota'}: {n.content[:180]}"
+            for n in e.notas_recentes[:5]
+        ) or "- ainda sem anotações do aluno"
         blocks.append(
-            f"## Estudos (Domínio Educação — estudo GERAL, não só idiomas)\n"
+            f"## Estudos — você é a MENTORA (Cap. 61)\n"
+            f"O aluno quer APRENDER de verdade, em qualquer área do conhecimento "
+            f"(direito, cálculo, psicologia, fisioterapia, biologia, programação…).\n"
             f"Minutos esta semana: {e.minutos_semana}\n"
             f"Áreas ativas: {', '.join(e.areas) or 'nenhuma'}\n"
             f"Trilhas:\n{trilhas}\n"
             f"Competências:\n{comps}\n"
-            f"Você está no papel de mentora: ensine, adapte o método, verifique compreensão. "
-            f"Qualquer área do conhecimento — matemática, direito, medicina, programação, "
-            f"história, concursos, idiomas etc."
+            f"O que ele já anotou que aprendeu:\n{notas}\n\n"
+            f"Como ensinar:\n"
+            f"1. Explique o conceito com clareza (sem enrolação).\n"
+            f"2. Dê 1 exemplo concreto da área dele.\n"
+            f"3. Faça 1 pergunta de checagem — só avance se ele demonstrar compreensão.\n"
+            f"4. Incentive-o a anotar no caderno o que entendeu com as próprias palavras.\n"
+            f"5. Adapte o nível: se errar, reexplique de outro jeito; se acertar, aprofunde."
         )
 
     if ctx.cabinet:

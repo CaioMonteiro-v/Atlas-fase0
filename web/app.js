@@ -771,29 +771,23 @@ $("#btn-add-goal").addEventListener("click", async () => {
   await loadFinance();
 });
 
-// ---------- education (estudo geral) ----------
-const SUBJECT_OPTS = [
-  "geral","matematica","fisica","quimica","biologia","medicina","direito",
-  "historia","filosofia","administracao","economia","programacao","engenharia",
-  "inteligencia_artificial","idiomas","musica","artes","concursos","outro",
-].map((a) => `<option value="${a}">${a}</option>`).join("");
-
+// ---------- education (estudo geral + mentora Ayra) ----------
 async function loadEducation() {
-  const [snap, tracks, comps, sessions] = await Promise.all([
+  const [snap, tracks, comps, notes] = await Promise.all([
     api("/education/snapshot"),
     api("/education/tracks"),
     api("/education/competencies"),
-    api("/education/sessions?limit=15"),
+    api("/education/notes?limit=30"),
   ]);
   $("#edu-summary").innerHTML = [
-    ["Trilhas ativas", snap.tracks_ativas?.length ?? 0],
+    ["Trilhas", snap.tracks_ativas?.length ?? 0],
     ["Minutos / semana", snap.minutos_semana ?? 0],
-    ["Áreas", (snap.areas || []).join(", ") || "—"],
-    ["Competências", snap.competencias?.length ?? 0],
+    ["Anotações", snap.notas_recentes?.length ?? notes.length ?? 0],
+    ["Áreas", (snap.areas || []).slice(0, 3).join(", ") || "qualquer"],
   ].map(([k, v]) => `<div class="stat"><span>${k}</span><b>${escapeHtml(String(v))}</b></div>`).join("");
 
   const tBox = $("#edu-tracks");
-  tBox.innerHTML = tracks.length ? "" : '<p class="muted">Crie uma trilha — matemática, direito, programação, concursos, idiomas…</p>';
+  tBox.innerHTML = tracks.length ? "" : '<p class="muted">Nenhuma trilha ainda. Digite o que quer aprender acima.</p>';
   for (const t of tracks) {
     const el = document.createElement("div");
     el.className = "row";
@@ -801,12 +795,36 @@ async function loadEducation() {
     el.innerHTML = `
       <h3>${escapeHtml(t.title)}</h3>
       <p>${escapeHtml(t.subject_area)} · ${escapeHtml(t.level)}</p>
-      <div class="meta"><span>${escapeHtml(t.goal || "sem objetivo")}</span><span>${t.status}</span></div>`;
+      <div class="meta"><span>${escapeHtml(t.goal || "aprender com compreensão")}</span></div>
+      <div class="actions" style="margin-top:10px">
+        <button type="button" class="primary" data-mentor="${t.id}">Continuar com Ayra</button>
+        <button type="button" class="ghost" data-note-track="${t.id}">Anotar</button>
+      </div>`;
+    el.querySelector("[data-mentor]").addEventListener("click", () => continueWithAyra(t));
+    el.querySelector("[data-note-track]").addEventListener("click", () => addNoteForTrack(t));
     tBox.append(el);
   }
 
+  const nBox = $("#edu-notes");
+  nBox.innerHTML = notes.length ? "" : '<p class="muted">Seu caderno está vazio. Depois de estudar com a Ayra, anote o que entendeu.</p>';
+  for (const n of notes) {
+    const el = document.createElement("div");
+    el.className = "row";
+    el.style.cursor = "default";
+    el.innerHTML = `
+      <h3>${escapeHtml(n.title || n.topic || "Aprendizado")}</h3>
+      <p>${escapeHtml(n.content)}</p>
+      <div class="meta"><span>${escapeHtml(n.topic || "")}</span>
+        <button type="button" class="ghost" data-del-note="${n.id}">Apagar</button></div>`;
+    el.querySelector("[data-del-note]").addEventListener("click", async () => {
+      await api(`/education/notes/${n.id}`, { method: "DELETE" });
+      await loadEducation();
+    });
+    nBox.append(el);
+  }
+
   const cBox = $("#edu-comps");
-  cBox.innerHTML = comps.length ? "" : '<p class="muted">Nenhuma competência registrada.</p>';
+  cBox.innerHTML = comps.length ? "" : '<p class="muted">Competências aparecem conforme você evolui.</p>';
   for (const c of comps) {
     const el = document.createElement("div");
     el.className = "row";
@@ -817,73 +835,98 @@ async function loadEducation() {
       <div class="meta"><span>${escapeHtml(c.status)}</span></div>`;
     cBox.append(el);
   }
-
-  const sBox = $("#edu-sessions");
-  sBox.innerHTML = sessions.length ? "" : '<p class="muted">Sem sessões de estudo.</p>';
-  for (const s of sessions) {
-    const el = document.createElement("div");
-    el.className = "row";
-    el.style.cursor = "default";
-    el.innerHTML = `
-      <h3>${s.minutes} min</h3>
-      <p>${escapeHtml(s.notes || (s.topics || []).join(", ") || "estudo")}</p>`;
-    sBox.append(el);
-  }
 }
 
-$("#btn-add-track").addEventListener("click", async () => {
-  const data = await openModal("Nova trilha de estudos", `
-    <label>Título<input name="title" required placeholder="Cálculo I / Direito Constitucional / Python"></label>
-    <label>Área<select name="subject_area">${SUBJECT_OPTS}</select></label>
-    <label>Nível
-      <select name="level">
-        <option value="iniciante">iniciante</option>
-        <option value="intermediario">intermediario</option>
-        <option value="avancado">avancado</option>
-      </select>
-    </label>
-    <label>Objetivo<textarea name="goal" rows="2" placeholder="Passar na prova / dominar o tema / emprego"></textarea></label>`);
-  if (!data) return;
-  await api("/education/tracks", { method: "POST", body: JSON.stringify(data) });
-  await loadEducation();
-});
+async function continueWithAyra(track) {
+  state.journeyId = track.journey_id || null;
+  setView("ayra");
+  await refreshJourneySelect();
+  if (track.journey_id) journeySelect.value = track.journey_id;
+  const msg = (
+    `Vamos continuar «${track.title}» (${track.subject_area}). ` +
+    `Nível ${track.level}. Objetivo: ${track.goal || "compreensão real"}. ` +
+    `Retome do próximo conceito e me faça uma pergunta de checagem no final.`
+  );
+  await sendChat(msg, { clearInput: false });
+}
 
-$("#btn-add-session").addEventListener("click", async () => {
-  const tracks = await api("/education/tracks");
-  if (!tracks.length) { alert("Crie uma trilha primeiro."); return; }
-  const options = tracks.map((t) => `<option value="${t.id}">${escapeHtml(t.title)}</option>`).join("");
-  const data = await openModal("Registrar sessão de estudo", `
-    <label>Trilha<select name="track_id">${options}</select></label>
-    <label>Minutos<input name="minutes" type="number" min="1" value="45" required></label>
-    <label>Notas<textarea name="notes" rows="2" placeholder="O que estudou / dúvidas"></textarea></label>`);
+async function addNoteForTrack(track) {
+  const data = await openModal("O que você aprendeu?", `
+    <p class="muted">Trilha: <strong>${escapeHtml(track.title)}</strong></p>
+    <label>Título curto<input name="title" placeholder="Ex.: Princípio da legalidade"></label>
+    <label>Tópico<input name="topic" value="${escapeHtml(track.subject_area)}"></label>
+    <label>Anotação (com suas palavras)<textarea name="content" rows="5" required
+      placeholder="O que entendi hoje…"></textarea></label>`);
   if (!data) return;
-  await api("/education/sessions", {
+  await api("/education/notes", {
     method: "POST",
     body: JSON.stringify({
-      track_id: data.track_id,
-      minutes: Number(data.minutes),
-      notes: data.notes || "",
-      topics: [],
+      track_id: track.id,
+      title: data.title || "",
+      topic: data.topic || track.subject_area,
+      content: data.content,
+      session_id: state.sessionId,
     }),
   });
   await loadEducation();
+}
+
+$("#study-start-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const topic = $("#study-topic").value.trim();
+  const level = $("#study-level").value;
+  const goal = $("#study-goal").value.trim();
+  if (!topic) return;
+  const btn = $("#study-go");
+  btn.disabled = true;
+  btn.textContent = "Preparando mentoria…";
+  try {
+    const data = await api("/education/start-with-ayra", {
+      method: "POST",
+      body: JSON.stringify({ topic, level, goal, subject_area: topic }),
+    });
+    state.sessionId = data.session_id;
+    state.journeyId = data.journey.id;
+    sess.textContent = `sessão ${data.session_id.slice(0, 8)}`;
+    setView("ayra");
+    await refreshJourneySelect();
+    journeySelect.value = data.journey.id;
+    renderJourneyChip({ title: data.journey.title, progress: data.journey.progress });
+    showWelcome();
+    await sendChat(data.mensagem_sugerida, { clearInput: false });
+    $("#study-topic").value = "";
+    $("#study-goal").value = "";
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Estudar com a Ayra";
+  }
 });
 
-$("#btn-add-comp").addEventListener("click", async () => {
-  const data = await openModal("Nova competência", `
-    <label>Nome<input name="name" required placeholder="Derivadas / Petição inicial / SQL"></label>
-    <label>Área<select name="subject_area">${SUBJECT_OPTS}</select></label>
-    <label>Nível
-      <select name="level">
-        <option value="iniciar">iniciar</option>
-        <option value="praticar">praticar</option>
-        <option value="proficiente">proficiente</option>
-        <option value="dominio">dominio</option>
-      </select>
-    </label>
-    <label>Evidência<textarea name="evidence" rows="2" placeholder="Projeto, exercício, prova…"></textarea></label>`);
+$("#btn-add-note").addEventListener("click", async () => {
+  const tracks = await api("/education/tracks");
+  if (!tracks.length) {
+    alert("Comece uma trilha em «O que você quer aprender?» primeiro.");
+    return;
+  }
+  const options = tracks.map((t) => `<option value="${t.id}">${escapeHtml(t.title)}</option>`).join("");
+  const data = await openModal("Nova anotação de aprendizado", `
+    <label>Trilha<select name="track_id">${options}</select></label>
+    <label>Título<input name="title" placeholder="Conceito do dia"></label>
+    <label>Tópico<input name="topic" placeholder="Ex.: controle de constitucionalidade"></label>
+    <label>O que aprendi<textarea name="content" rows="5" required></textarea></label>`);
   if (!data) return;
-  await api("/education/competencies", { method: "POST", body: JSON.stringify(data) });
+  await api("/education/notes", {
+    method: "POST",
+    body: JSON.stringify({
+      track_id: data.track_id,
+      title: data.title || "",
+      topic: data.topic || "",
+      content: data.content,
+      session_id: state.sessionId,
+    }),
+  });
   await loadEducation();
 });
 

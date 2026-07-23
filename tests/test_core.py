@@ -282,37 +282,42 @@ def test_pdf_extract() -> None:
 
 
 def test_education_general() -> None:
-    print("\n[9] Domínio Educação — estudo GERAL (não só idiomas)")
-    from app.domain.models import Competency, StudySession, StudyTrack
+    print("\n[9] Domínio Educação — estudo GERAL + caderno + área livre")
+    from app.domain.models import Competency, StudyNote, StudySession, StudyTrack
     from app.education.store import EducationStore
 
     db = make_db()
     edu = EducationStore(db)
 
     calc = edu.create_track(StudyTrack(
-        user_id=U, title="Cálculo I", subject_area="matematica",
+        user_id=U, title="Cálculo I", subject_area="Cálculo I",
         goal="passar na prova", level="iniciante",
     ))
     direito = edu.create_track(StudyTrack(
-        user_id=U, title="Constitucional", subject_area="direito",
+        user_id=U, title="Direito Constitucional", subject_area="Direito Constitucional",
         goal="concurso", level="intermediario",
     ))
-    idiomas = edu.create_track(StudyTrack(
-        user_id=U, title="Inglês técnico", subject_area="idiomas",
-        goal="ler papers", level="iniciante",
+    fisio = edu.create_track(StudyTrack(
+        user_id=U, title="Fisioterapia respiratória", subject_area="Fisioterapia",
+        goal="prática clínica", level="iniciante",
     ))
     areas = {t.subject_area for t in edu.list_tracks(U)}
-    check("trilhas em áreas distintas (não só idiomas)", areas == {"matematica", "direito", "idiomas"})
+    check("áreas livres (não lista fechada)", "Fisioterapia" in areas and "Direito Constitucional" in areas)
     check("isolamento por usuário", edu.get_track(OTHER, calc.id) is None)
 
     edu.add_session(StudySession(user_id=U, track_id=calc.id, minutes=50, notes="limites", topics=["limites"]))
     edu.create_competency(Competency(
-        user_id=U, track_id=calc.id, name="Limites", subject_area="matematica", level="praticar",
+        user_id=U, track_id=calc.id, name="Limites", subject_area="Cálculo I", level="praticar",
+    ))
+    edu.create_note(StudyNote(
+        user_id=U, track_id=direito.id, title="Legalidade",
+        topic="princípios", content="Administração só age conforme a lei.",
     ))
     snap = edu.snapshot(U)
     check("snapshot tem 3 trilhas", len(snap.tracks_ativas) == 3)
     check("minutos da semana", snap.minutos_semana >= 50)
-    check("áreas no snapshot", "matematica" in snap.areas and "direito" in snap.areas)
+    check("caderno no snapshot", len(snap.notas_recentes) >= 1)
+    check("fisioterapia também entra", any(t.title.startswith("Fisio") for t in snap.tracks_ativas))
 
 
 def test_cabinet() -> None:

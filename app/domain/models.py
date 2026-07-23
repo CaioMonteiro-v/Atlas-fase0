@@ -329,20 +329,23 @@ class FinanceSnapshot(AtlasModel):
 
 # --------------------------------------------------------------------------
 # Domínio Educação (Cap. 69–81) — estudo GERAL
-# Idiomas são uma subject_area, não o domínio inteiro.
+# Qualquer área do conhecimento: direito, cálculo, psicologia, fisioterapia…
+# SUBJECT_SUGGESTIONS são só sugestões de UI — a área é TEXTO LIVRE.
 # --------------------------------------------------------------------------
 StudyLevel = Literal["iniciante", "intermediario", "avancado"]
 StudyTrackStatus = Literal["ativa", "pausada", "concluida", "abandonada"]
 CompetencyLevel = Literal["iniciar", "praticar", "proficiente", "dominio"]
 CompetencyStatus = Literal["em_desenvolvimento", "adquirida", "a_revisar"]
 
-# Áreas canônicas — abertas o suficiente para qualquer assunto.
-SUBJECT_AREAS = (
-    "geral", "matematica", "fisica", "quimica", "biologia", "medicina",
-    "direito", "historia", "filosofia", "administracao", "economia",
-    "programacao", "engenharia", "inteligencia_artificial", "idiomas",
-    "musica", "artes", "concursos", "outro",
+SUBJECT_SUGGESTIONS = (
+    "direito", "matematica", "fisica", "quimica", "biologia", "medicina",
+    "fisioterapia", "psicologia", "enfermagem", "historia", "filosofia",
+    "administracao", "economia", "programacao", "engenharia",
+    "inteligencia_artificial", "idiomas", "musica", "artes", "concursos",
+    "pedagogia", "arquitetura", "outro",
 )
+# Compat: código antigo importava SUBJECT_AREAS
+SUBJECT_AREAS = SUBJECT_SUGGESTIONS
 
 
 class StudyTrack(AtlasModel):
@@ -350,7 +353,7 @@ class StudyTrack(AtlasModel):
     user_id: str
     journey_id: str | None = None
     title: str
-    subject_area: str = "geral"
+    subject_area: str = "geral"  # texto livre — qualquer área do conhecimento
     level: StudyLevel = "iniciante"
     goal: str = ""
     status: StudyTrackStatus = "ativa"
@@ -361,7 +364,7 @@ class StudyTrack(AtlasModel):
 
 class StudyTrackCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
-    subject_area: str = "geral"
+    subject_area: str = Field(default="geral", min_length=1, max_length=120)
     level: StudyLevel = "iniciante"
     goal: str = ""
     journey_id: str | None = None
@@ -386,6 +389,28 @@ class StudySessionCreate(BaseModel):
     occurred_at: datetime | None = None
 
 
+class StudyNote(AtlasModel):
+    """Anotação do que o aluno aprendeu — caderno vivo da mentoria."""
+
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str
+    session_id: str | None = None
+    title: str = ""
+    content: str
+    topic: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class StudyNoteCreate(BaseModel):
+    track_id: str
+    content: str = Field(min_length=1, max_length=20_000)
+    title: str = ""
+    topic: str = ""
+    session_id: str | None = None
+
+
 class Competency(AtlasModel):
     id: str = Field(default_factory=new_id)
     user_id: str
@@ -402,16 +427,26 @@ class Competency(AtlasModel):
 
 class CompetencyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
-    subject_area: str = "geral"
+    subject_area: str = Field(default="geral", min_length=1, max_length=120)
     level: CompetencyLevel = "iniciar"
     evidence: str = ""
     track_id: str | None = None
+
+
+class StartStudyWithAyra(BaseModel):
+    """Quero aprender X → trilha + jornada + sessão com a Ayra mentora."""
+
+    topic: str = Field(min_length=2, max_length=200, description="Ex.: Direito Constitucional, Cálculo 1, Fisioterapia")
+    goal: str = ""
+    level: StudyLevel = "iniciante"
+    subject_area: str = ""  # se vazio, usa o próprio topic
 
 
 class EducationSnapshot(AtlasModel):
     tracks_ativas: list[StudyTrack] = Field(default_factory=list)
     sessoes_recentes: list[StudySession] = Field(default_factory=list)
     competencias: list[Competency] = Field(default_factory=list)
+    notas_recentes: list[StudyNote] = Field(default_factory=list)
     minutos_semana: int = 0
     areas: list[str] = Field(default_factory=list)
 
