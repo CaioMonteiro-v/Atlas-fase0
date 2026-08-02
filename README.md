@@ -84,7 +84,7 @@ Regra de dependência: **cada camada só importa a de baixo**. `memory/` não sa
   - Dossiê do cidadão, agenda com status, atrasadas, assessoria Ayra
 - **Biblioteca com PDF** (`.txt`, `.md`, `.pdf` via pypdf + OCR)
   - Lista de nós, vizinhos, apagar, OCR na ingestão
-- **Início acionável** — alertas (revisões, urgentes, reserva baixa, próximo compromisso)
+- **Início acionável** — **Ayra do dia seguinte** (1 foco/dia) + alertas
 - **Jornadas** — pausar/concluir, definir objetivo real
 - **Dashboard, auditoria, export e wipe** na UI (Caps. 31 / 127)
 - Planejamento de jornada pela Ayra (`POST /journeys/{id}/plan`)
@@ -92,9 +92,10 @@ Regra de dependência: **cada camada só importa a de baixo**. `memory/` não sa
 ## Próximos passos
 
 1. Usar de verdade e ajustar o que a Ayra erra no dia a dia.
-2. Auth multi-usuário (JWT) quando sair do uso single-user.
-3. Postgres + pgvector quando o SQLite apertar.
-4. Orçamentos recorrentes / envelopes (finanças) se precisar.
+2. Notificação matinal (e-mail/push) do briefing do dia.
+3. Auth multi-usuário (JWT) quando sair do uso single-user.
+4. Postgres + pgvector quando o SQLite apertar.
+5. Orçamentos recorrentes / envelopes (finanças) se precisar.
 
 ## Decisões que valem defender
 

@@ -477,6 +477,54 @@ def test_study_mature_pack() -> None:
     check("snapshot traz revisões e plano", snap.plano_semana is not None)
 
 
+def test_morning_briefing() -> None:
+    print("\n[13] Ayra do dia seguinte")
+    import asyncio
+    from datetime import timedelta
+
+    from app.ayra.morning import MorningBriefingService
+    from app.domain.models import CabinetDemand, StudyNote, StudyTrack, utcnow
+    from app.llm.fake import FakeLLM
+    from app.memory.service import MemoryService
+
+    db = make_db()
+    mem = MemoryService(db, FakeLLM())
+    svc = MorningBriefingService(db, mem, FakeLLM())
+
+    # sem sinais → foco genérico
+    brief0 = asyncio.run(svc.build(U))
+    check("cria briefing do dia", brief0.day and brief0.action_text)
+    brief0b = asyncio.run(svc.build(U))
+    check("não regenera se pending", brief0b.id == brief0.id)
+
+    # demanda atrasada vence a prioridade
+    mem.cabinet.create_demand(CabinetDemand(
+        user_id=U, title="Ofício urgente", municipality="Sobral",
+        priority="urgente", due_date=utcnow() - timedelta(days=1),
+    ))
+    brief1 = asyncio.run(svc.build(U, force=True))
+    check("prioriza demanda atrasada", brief1.domain == "gabinete")
+    check("tem opener de chat", len(brief1.chat_opener) > 20)
+
+    track = mem.education.create_track(StudyTrack(
+        user_id=U, title="Cálculo", subject_area="Cálculo", level="iniciante",
+    ))
+    note = mem.education.create_note(StudyNote(
+        user_id=U, track_id=track.id, title="Limites",
+        content="Limite é o valor que a função se aproxima.",
+    ))
+    with mem.education.db.tx() as c:
+        c.execute(
+            "UPDATE study_review_cards SET next_review_at = ? WHERE note_id = ?",
+            ((utcnow() - timedelta(hours=2)).isoformat(), note.id),
+        )
+
+    payload = svc.start_payload(brief1)
+    check("start abre sessão", bool(payload["session_id"] and payload["mensagem_sugerida"]))
+    done = svc.mark(U, "done")
+    check("marca feito", done is not None and done.status == "done")
+
+
 if __name__ == "__main__":
     test_conversational()
     test_personal()
@@ -490,5 +538,6 @@ if __name__ == "__main__":
     test_cabinet()
     test_education_chapters_quiz()
     test_study_mature_pack()
+    test_morning_briefing()
     print("\nTodos os testes passaram.\n")
 

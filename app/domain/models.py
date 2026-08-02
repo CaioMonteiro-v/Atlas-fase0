@@ -769,6 +769,31 @@ class JourneyPlan(BaseModel):
 
 
 # --------------------------------------------------------------------------
+# Ayra do dia seguinte
+# --------------------------------------------------------------------------
+BriefingStatus = Literal["pending", "done", "skipped"]
+
+
+class DailyBriefing(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    day: str  # YYYY-MM-DD
+    domain: str = "geral"
+    view: str = "ayra"  # education | finance | cabinet | journeys | ayra
+    title: str
+    action_text: str
+    reason: str = ""
+    minutes: int = 15
+    status: BriefingStatus = "pending"
+    journey_id: str | None = None
+    ref_id: str | None = None
+    chat_opener: str = ""
+    signals: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+# --------------------------------------------------------------------------
 # Contexto que a Ayra monta antes de falar (Cap. 115 — ponto único de entrada)
 # --------------------------------------------------------------------------
 class AyraContext(AtlasModel):

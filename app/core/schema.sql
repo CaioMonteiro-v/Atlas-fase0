@@ -550,3 +550,32 @@ CREATE TABLE IF NOT EXISTS cabinet_agenda (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cabinet_agenda_user ON cabinet_agenda (user_id, starts_at);
+
+-- ---------------------------------------------------------------------
+-- Ayra do dia seguinte — um empurrão por dia
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS daily_briefings (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    day           TEXT NOT NULL,
+    domain        TEXT NOT NULL DEFAULT 'geral',
+    view          TEXT NOT NULL DEFAULT 'ayra',
+    title         TEXT NOT NULL,
+    action_text   TEXT NOT NULL,
+    reason        TEXT NOT NULL DEFAULT '',
+    minutes       INTEGER NOT NULL DEFAULT 15,
+    status        TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'done', 'skipped')),
+    journey_id    TEXT,
+    ref_id        TEXT,
+    chat_opener   TEXT NOT NULL DEFAULT '',
+    signals       TEXT NOT NULL DEFAULT '[]',
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (journey_id) REFERENCES journeys (id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_briefing_user_day
+    ON daily_briefings (user_id, day);
+CREATE INDEX IF NOT EXISTS idx_daily_briefings_user
+    ON daily_briefings (user_id, day DESC);

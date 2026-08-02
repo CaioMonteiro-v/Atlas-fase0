@@ -292,8 +292,14 @@ function openModal(title, fieldsHtml, { okLabel = "Salvar" } = {}) {
 // ---------- home / onboarding ----------
 async function loadHome() {
   const box = $("#home-dash");
+  const morningBox = $("#home-morning");
   try {
-    const d = await api("/memory/dashboard");
+    const [d, brief] = await Promise.all([
+      api("/memory/dashboard"),
+      api("/ayra/dia-seguinte").catch(() => null),
+    ]);
+    renderMorning(brief);
+
     const j = d.jornada_ativa;
     const alerts = (d.alertas || []).map((a) =>
       `<button type="button" class="home-alert ${a.nivel || ""}" data-view="${a.view || "home"}">${escapeHtml(a.texto)}</button>`
@@ -348,8 +354,72 @@ async function loadHome() {
       refreshJourneySelect();
     });
   } catch (err) {
+    morningBox.hidden = true;
     box.innerHTML = `<p class="muted">Não deu para carregar o painel (${escapeHtml(err.message)}).</p>`;
   }
+}
+
+function renderMorning(brief) {
+  const box = $("#home-morning");
+  if (!brief) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const done = brief.status === "done";
+  box.className = "morning-hero" + (done ? " is-done" : "");
+  box.innerHTML = `
+    <p class="eyebrow">Ayra do dia seguinte · ${escapeHtml(brief.day || "")}</p>
+    <h2>${escapeHtml(brief.title || "Foco do dia")}</h2>
+    <p class="action-line">${escapeHtml(brief.action_text || "")}</p>
+    <p class="why">${escapeHtml(brief.reason || "")}</p>
+    <div class="meta-row">
+      <span>${escapeHtml(brief.domain || "geral")}</span>
+      <span>${brief.minutes || 15} min</span>
+      <span>${done ? "feito" : "pendente"}</span>
+    </div>
+    <div class="actions">
+      ${done
+        ? `<button type="button" class="primary" id="btn-morning-again">Reabrir com Ayra</button>
+           <button type="button" class="ghost" id="btn-morning-refresh">Novo foco</button>`
+        : `<button type="button" class="primary" id="btn-morning-go">Fazer agora com a Ayra</button>
+           <button type="button" class="ghost" id="btn-morning-done">Marcar feito</button>
+           <button type="button" class="ghost" id="btn-morning-skip">Pular</button>
+           <button type="button" class="ghost" id="btn-morning-open">Só abrir ${escapeHtml(brief.view || "área")}</button>`}
+    </div>`;
+
+  $("#btn-morning-go")?.addEventListener("click", () => startMorningBrief());
+  $("#btn-morning-again")?.addEventListener("click", () => startMorningBrief());
+  $("#btn-morning-done")?.addEventListener("click", async () => {
+    await api("/ayra/dia-seguinte/status", { method: "POST", body: JSON.stringify({ status: "done" }) });
+    await loadHome();
+  });
+  $("#btn-morning-skip")?.addEventListener("click", async () => {
+    await api("/ayra/dia-seguinte/status", { method: "POST", body: JSON.stringify({ status: "skipped" }) });
+    const next = await api("/ayra/dia-seguinte?force=true");
+    renderMorning(next);
+  });
+  $("#btn-morning-refresh")?.addEventListener("click", async () => {
+    const next = await api("/ayra/dia-seguinte?force=true");
+    renderMorning(next);
+  });
+  $("#btn-morning-open")?.addEventListener("click", () => {
+    const view = brief.view || "ayra";
+    if (view === "ayra") startMorningBrief();
+    else setView(view);
+  });
+}
+
+async function startMorningBrief() {
+  const res = await api("/ayra/dia-seguinte/start", { method: "POST" });
+  state.sessionId = res.session_id;
+  state.journeyId = res.journey_id || null;
+  sess.textContent = `sessão ${res.session_id.slice(0, 8)}`;
+  setView("ayra");
+  await refreshJourneySelect();
+  if (res.journey_id) journeySelect.value = res.journey_id;
+  showWelcome();
+  await sendChat(res.mensagem_sugerida, { clearInput: false });
 }
 
 $("#onboard-form").addEventListener("submit", async (e) => {

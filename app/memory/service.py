@@ -268,6 +268,7 @@ class MemoryService:
             "study_materials", "study_review_cards", "study_weekly_plans",
             "competencies", "study_tracks",
             "cabinet_timeline", "cabinet_agenda", "cabinet_demands", "cabinet_citizens",
+            "daily_briefings",
         ]
         with self.db.tx() as c:
             for t in tables:

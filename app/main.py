@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import cabinet, chat, education, finance, journeys, memory as memory_routes
+from app.api import cabinet, chat, education, finance, journeys, memory as memory_routes, morning
 from app.core.config import get_settings
 from app.core.db import Database
 from app.llm.fake import FakeLLM
@@ -96,6 +96,7 @@ app.include_router(journeys.router)
 app.include_router(finance.router)
 app.include_router(education.router)
 app.include_router(cabinet.router)
+app.include_router(morning.router)
 
 
 @app.exception_handler(Exception)

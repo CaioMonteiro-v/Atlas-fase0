@@ -144,6 +144,30 @@ class FakeLLM(LLM):
                 nivel_sugerido="praticar",
             )
 
+        if name == "MorningPolish":
+            # extrai campos do brief textual
+            title = action = why = ""
+            for line in text.splitlines():
+                low = line.lower()
+                if low.startswith("título:"):
+                    title = line.split(":", 1)[1].strip()
+                elif low.startswith("ação:") or low.startswith("acao:"):
+                    action = line.split(":", 1)[1].strip()
+                elif low.startswith("motivo:"):
+                    why = line.split(":", 1)[1].strip()
+            title = title or "Foco do dia"
+            action = action or "Dar o próximo passo"
+            why = why or "É o que mais move o ponteiro hoje."
+            return schema(
+                headline=title,
+                action=action,
+                why=why,
+                chat_opener=(
+                    f"Bom dia. Hoje o foco é um só: {action} "
+                    f"Motivo: {why} Vamos começar — me diga se já fez ou se quer guia."
+                ),
+            )
+
         return schema()
 
     async def ocr(self, data: bytes, mime: str = "application/pdf") -> str:
