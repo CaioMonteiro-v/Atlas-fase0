@@ -95,8 +95,8 @@ function showWelcome() {
   logEl.innerHTML = `
     <div class="welcome">
       <h2>Olá. Eu sou a Ayra.</h2>
-      <p>Conte um objetivo — aprender, organizar finanças, criar um projeto.
-      Eu descubro o destino real e construo a jornada com você.</p>
+      <p>Um ponto de entrada para estudar, organizar dinheiro e tocar o gabinete.
+      Fala o objetivo — eu monto a jornada e te puxo pra ação.</p>
     </div>`;
 }
 
