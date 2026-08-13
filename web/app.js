@@ -1,5 +1,6 @@
 const API = "";
-const TOKEN = ""; // cole ATLAS_API_TOKEN se configurado
+const TOKEN_KEY = "atlas_api_token";
+let TOKEN = localStorage.getItem(TOKEN_KEY) || "";
 
 const state = {
   view: "home",
@@ -13,6 +14,23 @@ const state = {
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
+function setToken(value) {
+  TOKEN = String(value || "").trim();
+  if (TOKEN) localStorage.setItem(TOKEN_KEY, TOKEN);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+function askToken(reason = "A API pediu autenticação.") {
+  const current = TOKEN ? "(já tem um token salvo — cole outro pra trocar)" : "";
+  const value = window.prompt(
+    `${reason}\n\nCole o mesmo ATLAS_API_TOKEN que está no Render.\n${current}`,
+    TOKEN,
+  );
+  if (value == null) return false;
+  setToken(value);
+  return Boolean(TOKEN);
+}
+
 function headers(json = true) {
   const h = {};
   if (json) h["Content-Type"] = "application/json";
@@ -20,7 +38,7 @@ function headers(json = true) {
   return h;
 }
 
-async function api(path, opts = {}) {
+async function api(path, opts = {}, _retried = false) {
   const res = await fetch(`${API}${path}`, {
     ...opts,
     headers: { ...headers(!(opts.body instanceof FormData)), ...opts.headers },
@@ -29,6 +47,12 @@ async function api(path, opts = {}) {
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (res.status === 401 && !_retried) {
+    if (askToken("Token inválido ou ausente.")) {
+      return api(path, opts, true);
+    }
+    throw new Error("Sem token — nada foi salvo. Configure o ATLAS_API_TOKEN.");
+  }
   if (!res.ok) {
     const detail = data?.detail || data?.erro || (typeof data === "string" ? data : null);
     throw new Error(detail || `HTTP ${res.status}`);
@@ -38,6 +62,23 @@ async function api(path, opts = {}) {
 
 function money(n) {
   return Number(n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+/** Aceita 1500, 1500.50 ou 1.500,50 */
+function parseMoney(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const raw = String(value ?? "").trim().replace(/\s/g, "");
+  if (!raw) return 0;
+  if (raw.includes(",")) {
+    return Number(raw.replace(/\./g, "").replace(",", "."));
+  }
+  return Number(raw);
+}
+
+function toastError(err) {
+  const msg = err?.message || String(err);
+  console.error(err);
+  alert(msg);
 }
 
 function pct(n) {
@@ -783,15 +824,31 @@ $("#search-form").addEventListener("submit", async (e) => {
 
 // ---------- finance ----------
 async function loadFinance() {
-  const [health, accounts, goals, txs, report, debts, budget] = await Promise.all([
-    api("/finance/health"),
-    api("/finance/accounts"),
-    api("/finance/goals"),
-    api("/finance/transactions?limit=20"),
-    api("/finance/report"),
-    api("/finance/debts"),
-    api("/finance/budget"),
-  ]);
+  let health, accounts, goals, txs, report, debts, budget;
+  try {
+    [health, accounts, goals, txs, report, debts, budget] = await Promise.all([
+      api("/finance/health"),
+      api("/finance/accounts"),
+      api("/finance/goals"),
+      api("/finance/transactions?limit=20"),
+      api("/finance/report"),
+      api("/finance/debts"),
+      api("/finance/budget"),
+    ]);
+  } catch (err) {
+    $("#finance-health").innerHTML = "";
+    $("#finance-payoff").innerHTML = emptyState(
+      "Não deu para carregar Finanças",
+      err.message || "Confira o token da API e tente de novo.",
+    );
+    $("#finance-report").innerHTML = "";
+    $("#finance-budget").innerHTML = "";
+    $("#finance-debts").innerHTML = "";
+    $("#finance-accounts").innerHTML = "";
+    $("#finance-goals").innerHTML = "";
+    $("#finance-txs").innerHTML = "";
+    return;
+  }
 
   $("#finance-health").innerHTML = [
     ["Patrimônio", money(health.patrimonio)],
@@ -1101,73 +1158,94 @@ $("#btn-add-account").addEventListener("click", async () => {
         <option value="outro">outro</option>
       </select>
     </label>
-    <label>Saldo inicial<input name="balance" type="number" step="0.01" value="0"></label>`);
+    <label>Saldo inicial<input name="balance" inputmode="decimal" placeholder="0" value="0"></label>`);
   if (!data) return;
-  await api("/finance/accounts", {
-    method: "POST",
-    body: JSON.stringify({
-      name: data.name,
-      kind: data.kind,
-      balance: Number(data.balance || 0),
-    }),
-  });
-  await loadFinance();
+  try {
+    await api("/finance/accounts", {
+      method: "POST",
+      body: JSON.stringify({
+        name: String(data.name || "").trim(),
+        kind: data.kind,
+        balance: parseMoney(data.balance),
+      }),
+    });
+    await loadFinance();
+  } catch (err) {
+    toastError(err);
+  }
 });
 
 $("#btn-add-tx").addEventListener("click", async () => {
-  const accounts = await api("/finance/accounts");
-  if (!accounts.length) {
-    alert("Crie uma conta primeiro.");
-    return;
-  }
-  const options = accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
-  const data = await openModal("Novo lançamento", `
-    <label>Conta (origem)<select name="account_id">${options}</select></label>
-    <label>Tipo
-      <select name="kind" id="tx-kind">
-        <option value="despesa">despesa</option>
-        <option value="receita">receita</option>
-        <option value="transferencia">transferencia</option>
-      </select>
-    </label>
-    <label>Destino (só transferência)<select name="to_account_id"><option value="">—</option>${options}</select></label>
-    <label>Valor<input name="amount" type="number" min="0.01" step="0.01" required></label>
-    <label>Categoria<input name="category" value="geral" placeholder="moradia, mercado, salario…"></label>
-    <label>Descrição<input name="description" placeholder="Mercado, salário…"></label>`);
-  if (!data) return;
-  const payload = {
-    account_id: data.account_id,
-    kind: data.kind,
-    amount: Number(data.amount),
-    category: data.category || "geral",
-    description: data.description || "",
-  };
-  if (data.kind === "transferencia") {
-    if (!data.to_account_id) {
-      alert("Escolha a conta destino.");
+  try {
+    const accounts = await api("/finance/accounts");
+    if (!accounts.length) {
+      alert("Crie uma conta primeiro.");
       return;
     }
-    payload.to_account_id = data.to_account_id;
+    const options = accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
+    const data = await openModal("Novo lançamento", `
+      <label>Conta (origem)<select name="account_id">${options}</select></label>
+      <label>Tipo
+        <select name="kind" id="tx-kind">
+          <option value="despesa">despesa</option>
+          <option value="receita">receita</option>
+          <option value="transferencia">transferencia</option>
+        </select>
+      </label>
+      <label>Destino (só transferência)<select name="to_account_id"><option value="">—</option>${options}</select></label>
+      <label>Valor<input name="amount" inputmode="decimal" required placeholder="0,00"></label>
+      <label>Categoria<input name="category" value="geral" placeholder="moradia, mercado, salario…"></label>
+      <label>Descrição<input name="description" placeholder="Mercado, salário…"></label>`);
+    if (!data) return;
+    const amount = parseMoney(data.amount);
+    if (!(amount > 0)) {
+      alert("Informe um valor maior que zero.");
+      return;
+    }
+    const payload = {
+      account_id: data.account_id,
+      kind: data.kind,
+      amount,
+      category: data.category || "geral",
+      description: data.description || "",
+    };
+    if (data.kind === "transferencia") {
+      if (!data.to_account_id) {
+        alert("Escolha a conta destino.");
+        return;
+      }
+      payload.to_account_id = data.to_account_id;
+    }
+    await api("/finance/transactions", { method: "POST", body: JSON.stringify(payload) });
+    await loadFinance();
+  } catch (err) {
+    toastError(err);
   }
-  await api("/finance/transactions", { method: "POST", body: JSON.stringify(payload) });
-  await loadFinance();
 });
 
 $("#btn-add-goal").addEventListener("click", async () => {
   const data = await openModal("Nova meta financeira", `
     <label>Título<input name="title" required placeholder="Reserva de emergência"></label>
-    <label>Valor alvo (R$)<input name="target_amount" type="number" min="0.01" step="0.01" required></label>
-    <label>Já juntado (R$)<input name="current_amount" type="number" min="0" step="0.01" value="0"></label>
+    <label>Valor alvo (R$)<input name="target_amount" inputmode="decimal" required placeholder="0,00"></label>
+    <label>Já juntado (R$)<input name="current_amount" inputmode="decimal" value="0"></label>
     <label>Prazo<input name="deadline" type="date"></label>`);
   if (!data) return;
-  const body = {
-    title: data.title,
-    target_amount: Number(data.target_amount),
-    current_amount: Number(data.current_amount || 0),
-  };
-  if (data.deadline) body.deadline = new Date(data.deadline).toISOString();
-  await api("/finance/goals", { method: "POST", body: JSON.stringify(body) });
-  await loadFinance();
+  try {
+    const body = {
+      title: String(data.title || "").trim(),
+      target_amount: parseMoney(data.target_amount),
+      current_amount: parseMoney(data.current_amount || 0),
+    };
+    if (!(body.target_amount > 0)) {
+      alert("Informe um valor alvo maior que zero.");
+      return;
+    }
+    if (data.deadline) body.deadline = new Date(data.deadline).toISOString();
+    await api("/finance/goals", { method: "POST", body: JSON.stringify(body) });
+    await loadFinance();
+  } catch (err) {
+    toastError(err);
+  }
 });
 
 // ---------- education (estudo geral + mentora Ayra) ----------
@@ -1787,14 +1865,31 @@ $("#btn-add-agenda").addEventListener("click", async () => {
   await loadCabinet();
 });
 
+$("#btn-api-token")?.addEventListener("click", () => {
+  if (askToken("Configure o acesso à API.")) {
+    alert(TOKEN ? "Token salvo neste navegador." : "Token removido.");
+    if (state.view === "finance") loadFinance();
+  }
+});
+
 // ---------- boot ----------
 async function boot() {
   showWelcome();
   try {
-    const h = await api("/health");
-    $("#llm-badge").textContent = `llm · ${h.llm}`;
+    // /health não exige token — evita prompt no boot
+    const res = await fetch(`${API}/health`);
+    const h = res.ok ? await res.json() : null;
+    $("#llm-badge").textContent = h ? `llm · ${h.llm}` : "offline";
   } catch {
     $("#llm-badge").textContent = "offline";
+  }
+  // Se o Render exige token e ainda não tem, pede uma vez cedo
+  if (!TOKEN) {
+    try {
+      await api("/finance/accounts");
+    } catch {
+      /* askToken já rodou no 401; segue o boot */
+    }
   }
   await loadHome();
   await refreshJourneySelect();
