@@ -52,6 +52,10 @@ function escapeHtml(s) {
     .replaceAll('"', "&quot;");
 }
 
+function emptyState(title, text) {
+  return `<div class="empty-state"><strong>${escapeHtml(title)}</strong>${escapeHtml(text)}</div>`;
+}
+
 // ---------- navigation ----------
 function setView(name) {
   state.view = name;
@@ -840,7 +844,10 @@ async function loadFinance() {
   });
 
   const dBox = $("#finance-debts");
-  dBox.innerHTML = debts.length ? "" : '<p class="muted">Nenhuma dívida. Cadastre empréstimos/cartão para o plano funcionar.</p>';
+  dBox.innerHTML = debts.length ? "" : emptyState(
+    "Nenhuma dívida cadastrada",
+    "Registre cartão, empréstimo ou carnê. O plano anti-dívida usa isso.",
+  );
   for (const d of debts) {
     const el = document.createElement("div");
     el.className = "row";
@@ -879,7 +886,10 @@ async function loadFinance() {
   }
 
   const accBox = $("#finance-accounts");
-  accBox.innerHTML = accounts.length ? "" : '<p class="muted">Crie uma conta para começar.</p>';
+  accBox.innerHTML = accounts.length ? "" : emptyState(
+    "Sem contas ainda",
+    "Crie conta corrente, poupança ou carteira para lançar entradas e saídas.",
+  );
   for (const a of accounts) {
     const el = document.createElement("div");
     el.className = "row";
@@ -898,7 +908,10 @@ async function loadFinance() {
   }
 
   const goalBox = $("#finance-goals");
-  goalBox.innerHTML = goals.length ? "" : '<p class="muted">Nenhuma meta financeira.</p>';
+  goalBox.innerHTML = goals.length ? "" : emptyState(
+    "Nenhuma meta",
+    "Defina uma reserva, viagem ou quitação e acompanhe o progresso.",
+  );
   for (const g of goals) {
     const el = document.createElement("div");
     el.className = "row";
@@ -929,7 +942,10 @@ async function loadFinance() {
   }
 
   const txBox = $("#finance-txs");
-  txBox.innerHTML = txs.length ? "" : '<p class="muted">Sem lançamentos.</p>';
+  txBox.innerHTML = txs.length ? "" : emptyState(
+    "Sem lançamentos",
+    "Registre uma receita ou despesa — o relatório do mês nasce daqui.",
+  );
   for (const t of txs) {
     const el = document.createElement("div");
     el.className = "row";

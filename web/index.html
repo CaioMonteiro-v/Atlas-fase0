@@ -6,27 +6,32 @@
 <title>Atlas — Ayra</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Literata:opsz,wght@7..72,400;7..72,600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650;9..144,700&family=Newsreader:opsz,wght@6..72,400;6..72,600&family=Sora:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <div class="app" id="app">
   <aside class="rail" aria-label="Navegação Atlas">
-    <div class="brand" data-view="home">
-      <span class="brand-mark" aria-hidden="true"></span>
-      <div>
-        <strong>Atlas</strong>
-        <small>com Ayra</small>
+    <div class="rail-top">
+      <div class="brand" data-view="home">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <strong>Atlas</strong>
+          <small>com Ayra</small>
+        </div>
       </div>
     </div>
 
     <nav class="nav">
+      <p class="nav-label">Centro</p>
       <button type="button" class="nav-item is-active" data-view="home">Início</button>
       <button type="button" class="nav-item" data-view="ayra">Ayra</button>
       <button type="button" class="nav-item" data-view="journeys">Jornadas</button>
+      <p class="nav-label">Domínios</p>
       <button type="button" class="nav-item" data-view="education">Estudos</button>
       <button type="button" class="nav-item" data-view="finance">Finanças</button>
       <button type="button" class="nav-item" data-view="cabinet">Gabinete</button>
+      <p class="nav-label">Base</p>
       <button type="button" class="nav-item" data-view="memory">Memória</button>
       <button type="button" class="nav-item" data-view="library">Biblioteca</button>
     </nav>
@@ -44,6 +49,7 @@
         <div>
           <p class="eyebrow">Sua evolução</p>
           <h1>Início</h1>
+          <p class="view-lead">Um foco por dia. O resto do Atlas espera quando você precisar.</p>
         </div>
       </header>
       <div id="home-morning" class="morning-hero" hidden></div>
@@ -71,6 +77,7 @@
         <div>
           <p class="eyebrow">Inteligência do Atlas</p>
           <h1>Ayra</h1>
+          <p class="view-lead">Mentor, consultor e assessor — um ponto de entrada para tudo.</p>
         </div>
         <div class="session-meta">
           <label class="journey-bind">
@@ -104,8 +111,9 @@
     <section class="view" id="view-education" data-view-panel="education" hidden>
       <header class="view-head">
         <div>
-          <p class="eyebrow">Ayra mentora · qualquer área do conhecimento</p>
+          <p class="eyebrow">Ayra mentora · qualquer área</p>
           <h1>Estudos</h1>
+          <p class="view-lead">Aprenda, anote e continue — a Ayra monta a trilha e cobra a revisão.</p>
         </div>
       </header>
 
@@ -223,16 +231,17 @@
     <section class="view" id="view-cabinet" data-view-panel="cabinet" hidden>
       <header class="view-head">
         <div>
-          <p class="eyebrow">Domínio Governamental</p>
+          <p class="eyebrow">Domínio governamental</p>
           <h1>Gabinete</h1>
-        </div>
-        <div class="actions">
-          <button type="button" class="ghost" id="btn-cab-ayra">Assessoria Ayra</button>
-          <button type="button" class="ghost" id="btn-add-citizen">Cidadão</button>
-          <button type="button" class="ghost" id="btn-add-agenda">Agenda</button>
-          <button type="button" class="primary" id="btn-add-demand">Demanda</button>
+          <p class="view-lead">Cidadãos, demandas e agenda — com assessoria da Ayra.</p>
         </div>
       </header>
+      <div class="toolbar actions">
+        <button type="button" class="primary" id="btn-cab-ayra">Assessoria Ayra</button>
+        <button type="button" class="ghost" id="btn-add-citizen">Cidadão</button>
+        <button type="button" class="ghost" id="btn-add-agenda">Agenda</button>
+        <button type="button" class="ghost" id="btn-add-demand">Demanda</button>
+      </div>
       <div id="cab-summary" class="health-strip"></div>
       <div class="finance-grid">
         <div>
@@ -271,36 +280,37 @@
     <section class="view" id="view-finance" data-view-panel="finance" hidden>
       <header class="view-head">
         <div>
-          <p class="eyebrow">Domínio Financeiro</p>
+          <p class="eyebrow">Domínio financeiro</p>
           <h1>Finanças</h1>
-        </div>
-        <div class="actions">
-          <button type="button" class="ghost" id="btn-fin-ayra">Consultoria Ayra</button>
-          <button type="button" class="ghost" id="btn-add-debt">Dívida</button>
-          <button type="button" class="ghost" id="btn-add-budget">Teto orçamento</button>
-          <button type="button" class="ghost" id="btn-add-account">Conta</button>
-          <button type="button" class="ghost" id="btn-add-tx">Lançamento</button>
-          <button type="button" class="primary" id="btn-add-goal">Meta</button>
+          <p class="view-lead">Gaste menos, poupe e quite — com a Ayra no controle do plano.</p>
         </div>
       </header>
+      <div class="toolbar actions">
+        <button type="button" class="primary" id="btn-fin-ayra">Consultoria Ayra</button>
+        <button type="button" class="ghost" id="btn-add-debt">Dívida</button>
+        <button type="button" class="ghost" id="btn-add-budget">Teto orçamento</button>
+        <button type="button" class="ghost" id="btn-add-account">Conta</button>
+        <button type="button" class="ghost" id="btn-add-tx">Lançamento</button>
+        <button type="button" class="ghost" id="btn-add-goal">Meta</button>
+      </div>
       <div id="finance-health" class="health-strip"></div>
       <div id="finance-payoff" class="edu-panel"></div>
       <div id="finance-report" class="edu-panel"></div>
       <div id="finance-budget" class="edu-panel"></div>
       <div class="finance-grid">
-        <div>
+        <div class="lane">
           <h2 class="section-title">Dívidas / empréstimos</h2>
           <div id="finance-debts" class="list-stack"></div>
         </div>
-        <div>
+        <div class="lane">
           <h2 class="section-title">Contas</h2>
           <div id="finance-accounts" class="list-stack"></div>
         </div>
-        <div>
+        <div class="lane">
           <h2 class="section-title">Metas</h2>
           <div id="finance-goals" class="list-stack"></div>
         </div>
-        <div>
+        <div class="lane">
           <h2 class="section-title">Lançamentos recentes</h2>
           <div id="finance-txs" class="list-stack"></div>
         </div>
