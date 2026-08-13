@@ -167,6 +167,36 @@ class MorningBriefingService:
                 "journey_id": None,
             })
 
+        if health.dividas_total > 0:
+            debts = self.memory.finance.list_debts(user_id, status="ativa")
+            top_debt = sorted(debts, key=lambda d: -d.interest_rate_month)[0] if debts else None
+            if top_debt:
+                cands.append({
+                    "priority": 75,
+                    "domain": "financas",
+                    "view": "finance",
+                    "title": "Atacar a dívida cara",
+                    "action_text": (
+                        f"Pagar um extra em «{top_debt.name}» "
+                        f"({top_debt.interest_rate_month:.1f}% a.m.)."
+                    ),
+                    "reason": f"R$ {health.dividas_total:.0f} em dívidas ativas.",
+                    "minutes": 15,
+                    "ref_id": top_debt.id,
+                    "journey_id": None,
+                })
+        if health.categorias_estouradas:
+            cands.append({
+                "priority": 72,
+                "domain": "financas",
+                "view": "finance",
+                "title": "Orçamento estourou",
+                "action_text": "Cortar uma categoria que passou do teto e registrar o gasto.",
+                "reason": f"{health.categorias_estouradas} categoria(s) acima do limite.",
+                "minutes": 15,
+                "ref_id": None,
+                "journey_id": None,
+            })
         if health.taxa_poupanca < 0 and health.receita_mes > 0:
             cands.append({
                 "priority": 70,

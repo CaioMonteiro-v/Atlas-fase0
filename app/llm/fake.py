@@ -168,6 +168,18 @@ class FakeLLM(LLM):
                 ),
             )
 
+        if name == "DebtPlanPolish":
+            return schema(
+                summary=(
+                    "Há dívidas ativas e espaço para cortar gasto. "
+                    "Ataque a de maior juros primeiro e proteja a parcela mínima das outras."
+                ),
+                chat_opener=(
+                    "Quero sair das dívidas. Me diga o que cortar este mês e qual empréstimo "
+                    "atacar primeiro — cobrando resultado concreto."
+                ),
+            )
+
         return schema()
 
     async def ocr(self, data: bytes, mime: str = "application/pdf") -> str:

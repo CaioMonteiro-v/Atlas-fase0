@@ -479,10 +479,11 @@ button:disabled { opacity: .45; cursor: default; }
 .alert-stack { margin-top: 4px; }
 .home-card.span-alerts { grid-column: 1 / -1; }
 .cat-bar {
-  display: grid; grid-template-columns: 110px 1fr auto;
+  display: grid; grid-template-columns: 110px 1fr auto auto;
   gap: 10px; align-items: center; margin: 8px 0;
   font-size: 0.85rem;
 }
+.cat-bar.is-over b { color: var(--danger); }
 .row.is-overdue { border-color: rgba(163, 59, 45, 0.45); background: rgba(163, 59, 45, 0.05); }
 
 .detail-pane {

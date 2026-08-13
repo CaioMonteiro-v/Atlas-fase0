@@ -477,6 +477,58 @@ def test_study_mature_pack() -> None:
     check("snapshot traz revisões e plano", snap.plano_semana is not None)
 
 
+def test_finance_debts_budget_payoff() -> None:
+    print("\n[14] Dívidas + orçamento + plano de quitação")
+    import asyncio
+
+    from app.domain.models import (
+        FinanceAccount, FinanceBudgetCap, FinanceDebt, FinanceTransaction,
+    )
+    from app.finance.payoff import build_payoff_plan
+    from app.finance.store import FinanceStore
+    from app.llm.fake import FakeLLM
+    from app.memory.service import MemoryService
+
+    db = make_db()
+    fin = FinanceStore(db)
+    acc = fin.create_account(FinanceAccount(user_id=U, name="Corrente", balance=800))
+    fin.add_transaction(FinanceTransaction(
+        user_id=U, account_id=acc.id, kind="receita", amount=3000, category="salario",
+    ))
+    fin.add_transaction(FinanceTransaction(
+        user_id=U, account_id=acc.id, kind="despesa", amount=900, category="mercado",
+    ))
+    fin.add_transaction(FinanceTransaction(
+        user_id=U, account_id=acc.id, kind="despesa", amount=400, category="lazer",
+    ))
+    fin.create_debt(FinanceDebt(
+        user_id=U, name="Empréstimo caro", kind="emprestimo",
+        balance=5000, interest_rate_month=3.5, installment=350,
+    ))
+    fin.create_debt(FinanceDebt(
+        user_id=U, name="Cartão", kind="cartao",
+        balance=1200, interest_rate_month=12.0, installment=200,
+    ))
+    fin.upsert_budget_cap(FinanceBudgetCap(
+        user_id=U, month=fin.current_month(), category="lazer", limit_amount=200,
+    ))
+    budget = fin.budget_status(U)
+    check("orçamento detecta estouro", budget["estouradas"] >= 1)
+    health = fin.health(U)
+    check("health soma dívidas", health.dividas_total >= 6200)
+    check("health soma parcelas", health.parcelas_mes >= 550)
+
+    mem = MemoryService(db, FakeLLM())
+    plan = asyncio.run(build_payoff_plan(mem, FakeLLM(), U, strategy="avalanche", extra_payment=300))
+    check("plano lista dívidas", len(plan.order) == 2)
+    check("avalanche ataca maior juros", plan.order[0]["name"] == "Cartão")
+    check("sugeriu cortes", len(plan.cuts) >= 1)
+    check("tem opener", "dívid" in plan.chat_opener.lower() or "dividas" in plan.chat_opener.lower() or len(plan.chat_opener) > 30)
+
+    plan2 = asyncio.run(build_payoff_plan(mem, FakeLLM(), U, strategy="bola_de_neve", extra_payment=100))
+    check("bola de neve ataca menor saldo", plan2.order[0]["name"] == "Cartão" or plan2.order[0]["balance"] <= plan2.order[1]["balance"])
+
+
 def test_morning_briefing() -> None:
     print("\n[13] Ayra do dia seguinte")
     import asyncio
@@ -539,5 +591,6 @@ if __name__ == "__main__":
     test_education_chapters_quiz()
     test_study_mature_pack()
     test_morning_briefing()
+    test_finance_debts_budget_payoff()
     print("\nTodos os testes passaram.\n")
 

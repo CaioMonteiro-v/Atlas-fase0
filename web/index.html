@@ -276,14 +276,22 @@
         </div>
         <div class="actions">
           <button type="button" class="ghost" id="btn-fin-ayra">Consultoria Ayra</button>
+          <button type="button" class="ghost" id="btn-add-debt">Dívida</button>
+          <button type="button" class="ghost" id="btn-add-budget">Teto orçamento</button>
           <button type="button" class="ghost" id="btn-add-account">Conta</button>
           <button type="button" class="ghost" id="btn-add-tx">Lançamento</button>
           <button type="button" class="primary" id="btn-add-goal">Meta</button>
         </div>
       </header>
       <div id="finance-health" class="health-strip"></div>
+      <div id="finance-payoff" class="edu-panel"></div>
       <div id="finance-report" class="edu-panel"></div>
+      <div id="finance-budget" class="edu-panel"></div>
       <div class="finance-grid">
+        <div>
+          <h2 class="section-title">Dívidas / empréstimos</h2>
+          <div id="finance-debts" class="list-stack"></div>
+        </div>
         <div>
           <h2 class="section-title">Contas</h2>
           <div id="finance-accounts" class="list-stack"></div>
@@ -292,7 +300,7 @@
           <h2 class="section-title">Metas</h2>
           <div id="finance-goals" class="list-stack"></div>
         </div>
-        <div class="span-2">
+        <div>
           <h2 class="section-title">Lançamentos recentes</h2>
           <div id="finance-txs" class="list-stack"></div>
         </div>

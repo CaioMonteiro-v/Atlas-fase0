@@ -779,22 +779,35 @@ $("#search-form").addEventListener("submit", async (e) => {
 
 // ---------- finance ----------
 async function loadFinance() {
-  const [health, accounts, goals, txs, report] = await Promise.all([
+  const [health, accounts, goals, txs, report, debts, budget] = await Promise.all([
     api("/finance/health"),
     api("/finance/accounts"),
     api("/finance/goals"),
     api("/finance/transactions?limit=20"),
     api("/finance/report"),
+    api("/finance/debts"),
+    api("/finance/budget"),
   ]);
 
   $("#finance-health").innerHTML = [
     ["Patrimônio", money(health.patrimonio)],
     ["Receita / mês", money(health.receita_mes)],
     ["Despesa / mês", money(health.despesa_mes)],
+    ["Dívidas", money(health.dividas_total ?? 0)],
+    ["Parcelas / mês", money(health.parcelas_mes ?? 0)],
     ["Poupança", pct(health.taxa_poupanca)],
-    ["Reserva", health.reserva_meses != null ? `${health.reserva_meses} meses` : "n/d"],
-    ["Metas", `${health.metas_ativas} · ${pct(health.progresso_metas)}`],
   ].map(([k, v]) => `<div class="stat"><span>${k}</span><b>${v}</b></div>`).join("");
+
+  $("#finance-payoff").innerHTML = `
+    <h2>Plano anti-dívida</h2>
+    <p class="muted">Cadastre os empréstimos → defina um extra mensal → a Ayra monta a ordem de ataque e o que cortar.</p>
+    <div class="actions" style="margin-top:10px">
+      <button type="button" class="primary" id="btn-payoff-start">Gerar plano e falar com Ayra</button>
+      <button type="button" class="ghost" id="btn-payoff-preview">Só ver o plano</button>
+    </div>
+    <div id="finance-payoff-result" style="margin-top:12px"></div>`;
+  $("#btn-payoff-start")?.addEventListener("click", () => runPayoffPlan(true));
+  $("#btn-payoff-preview")?.addEventListener("click", () => runPayoffPlan(false));
 
   const cats = (report.por_categoria || []).map((c) =>
     `<div class="cat-bar"><span>${escapeHtml(c.categoria)}</span>
@@ -803,8 +816,67 @@ async function loadFinance() {
   ).join("") || '<p class="muted">Sem despesas categorizadas neste mês.</p>';
   $("#finance-report").innerHTML = `
     <h2>Fluxo de ${escapeHtml(report.month)}</h2>
-    <p class="muted">Receita ${money(report.receita)} · Despesa ${money(report.despesa)} · Poupança ${money(report.poupanca)} · ${report.lancamentos} lançamentos</p>
+    <p class="muted">Receita ${money(report.receita)} · Despesa ${money(report.despesa)} · Poupança ${money(report.poupanca)}</p>
     ${cats}`;
+
+  const bRows = (budget.caps || []).map((c) => {
+    const lim = c.limite == null ? "sem teto" : money(c.limite);
+    const pctVal = c.pct != null ? Math.min(c.pct, 100) : 0;
+    const flag = c.estourada ? " · ESTOUROU" : (c.sem_teto ? " · sem teto" : "");
+    return `<div class="cat-bar${c.estourada ? " is-over" : ""}"><span>${escapeHtml(c.categoria)}</span>
+      <div class="progress is-thick"><span style="width:${pctVal}%"></span></div>
+      <b>${money(c.gasto)} / ${lim}${flag}</b>
+      ${c.id ? `<button type="button" class="ghost" data-del-cap="${c.id}">×</button>` : ""}</div>`;
+  }).join("") || '<p class="muted">Defina tetos (mercado, lazer…) para a Ayra saber o que cortar.</p>';
+  $("#finance-budget").innerHTML = `
+    <h2>Orçamento · ${escapeHtml(budget.month)}</h2>
+    <p class="muted">${budget.estouradas || 0} categoria(s) estourada(s) · limite ${money(budget.total_limit || 0)}</p>
+    ${bRows}`;
+  $$("[data-del-cap]", $("#finance-budget")).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await api(`/finance/budget/${btn.dataset.delCap}`, { method: "DELETE" });
+      await loadFinance();
+    });
+  });
+
+  const dBox = $("#finance-debts");
+  dBox.innerHTML = debts.length ? "" : '<p class="muted">Nenhuma dívida. Cadastre empréstimos/cartão para o plano funcionar.</p>';
+  for (const d of debts) {
+    const el = document.createElement("div");
+    el.className = "row";
+    el.style.cursor = "default";
+    el.innerHTML = `
+      <h3>${escapeHtml(d.name)}</h3>
+      <p>${escapeHtml(d.kind)} · ${d.interest_rate_month}% a.m. · parcela ${money(d.installment)}</p>
+      <div class="meta"><b>saldo ${money(d.balance)}</b><span>vence dia ${d.due_day}</span></div>
+      <div class="actions" style="margin-top:8px">
+        <button type="button" class="ghost" data-pay-debt="${d.id}">Registrar pagamento</button>
+        <button type="button" class="ghost" data-quit-debt="${d.id}">Quitar</button>
+        <button type="button" class="ghost" data-del-debt="${d.id}">Apagar</button>
+      </div>`;
+    el.querySelector("[data-pay-debt]").addEventListener("click", async () => {
+      const data = await openModal("Pagamento na dívida", `
+        <label>Novo saldo restante (R$)<input name="balance" type="number" min="0" step="0.01" value="${d.balance}" required></label>`);
+      if (!data) return;
+      await api(`/finance/debts/${d.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ balance: Number(data.balance) }),
+      });
+      await loadFinance();
+    });
+    el.querySelector("[data-quit-debt]").addEventListener("click", async () => {
+      await api(`/finance/debts/${d.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ balance: 0, status: "quitada" }),
+      });
+      await loadFinance();
+    });
+    el.querySelector("[data-del-debt]").addEventListener("click", async () => {
+      await api(`/finance/debts/${d.id}`, { method: "DELETE" });
+      await loadFinance();
+    });
+    dBox.append(el);
+  }
 
   const accBox = $("#finance-accounts");
   accBox.innerHTML = accounts.length ? "" : '<p class="muted">Crie uma conta para começar.</p>';
@@ -876,6 +948,103 @@ async function loadFinance() {
     txBox.append(el);
   }
 }
+
+async function runPayoffPlan(startChat) {
+  const data = await openModal("Plano anti-dívida", `
+    <label>Estratégia
+      <select name="strategy">
+        <option value="avalanche">avalanche (maior juros primeiro)</option>
+        <option value="bola_de_neve">bola de neve (menor saldo primeiro)</option>
+      </select>
+    </label>
+    <label>Extra além das parcelas (R$/mês)
+      <input name="extra_payment" type="number" min="0" step="0.01" value="200">
+    </label>
+    <p class="muted">Avalanche economiza juros. Bola de neve dá vitórias rápidas.</p>`);
+  if (!data) return;
+  const body = {
+    strategy: data.strategy,
+    extra_payment: Number(data.extra_payment || 0),
+  };
+  if (startChat) {
+    const res = await api("/finance/payoff-plan/start", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    state.sessionId = res.session_id;
+    state.journeyId = res.journey.id;
+    sess.textContent = `sessão ${res.session_id.slice(0, 8)}`;
+    setView("ayra");
+    await refreshJourneySelect();
+    journeySelect.value = res.journey.id;
+    await sendChat(res.mensagem_sugerida, { clearInput: false });
+    return;
+  }
+  const plan = await api("/finance/payoff-plan", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  const order = (plan.order || []).map((o) =>
+    `${o.rank}. ${escapeHtml(o.name)} — ${money(o.balance)} · ${o.interest_rate_month}% · ${o.role}`
+  ).join("<br>") || "Sem dívidas.";
+  const cuts = (plan.cuts || []).map((c) =>
+    `${escapeHtml(c.categoria)}: cortar ${money(c.cortar)} (${escapeHtml(c.motivo)})`
+  ).join("<br>") || "Sem cortes sugeridos.";
+  $("#finance-payoff-result").innerHTML = `
+    <p><strong>${escapeHtml(plan.summary || "")}</strong></p>
+    <p class="muted">Extra ${money(plan.extra_payment)} · prazo ~${plan.months_estimate ?? "?"} meses</p>
+    <p>${order}</p>
+    <p class="muted" style="margin-top:8px">Cortes:<br>${cuts}</p>`;
+}
+
+$("#btn-add-debt")?.addEventListener("click", async () => {
+  const data = await openModal("Nova dívida / empréstimo", `
+    <label>Nome<input name="name" required placeholder="Empréstimo banco X / cartão Y"></label>
+    <label>Tipo
+      <select name="kind">
+        <option value="emprestimo">empréstimo</option>
+        <option value="cartao">cartão</option>
+        <option value="financiamento">financiamento</option>
+        <option value="cheque_especial">cheque especial</option>
+        <option value="outro">outro</option>
+      </select>
+    </label>
+    <label>Saldo devedor (R$)<input name="balance" type="number" min="0" step="0.01" required></label>
+    <label>Juros % a.m.<input name="interest_rate_month" type="number" min="0" step="0.01" value="2"></label>
+    <label>Parcela mensal (R$)<input name="installment" type="number" min="0" step="0.01" value="0"></label>
+    <label>Dia do vencimento<input name="due_day" type="number" min="1" max="31" value="10"></label>
+    <label>Credor<input name="lender" placeholder="Banco / financeira"></label>`);
+  if (!data) return;
+  await api("/finance/debts", {
+    method: "POST",
+    body: JSON.stringify({
+      name: data.name,
+      kind: data.kind,
+      balance: Number(data.balance),
+      interest_rate_month: Number(data.interest_rate_month || 0),
+      installment: Number(data.installment || 0),
+      due_day: Number(data.due_day || 1),
+      lender: data.lender || "",
+    }),
+  });
+  await loadFinance();
+});
+
+$("#btn-add-budget")?.addEventListener("click", async () => {
+  const data = await openModal("Teto de orçamento", `
+    <label>Categoria<input name="category" required placeholder="mercado, lazer, transporte…"></label>
+    <label>Limite do mês (R$)<input name="limit_amount" type="number" min="0" step="0.01" required></label>
+    <p class="muted">Vale para o mês atual. A Ayra usa isso para sugerir cortes.</p>`);
+  if (!data) return;
+  await api("/finance/budget", {
+    method: "PUT",
+    body: JSON.stringify({
+      category: data.category,
+      limit_amount: Number(data.limit_amount),
+    }),
+  });
+  await loadFinance();
+});
 
 $("#btn-fin-ayra")?.addEventListener("click", async () => {
   const data = await openModal("Consultoria financeira com a Ayra", `

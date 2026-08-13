@@ -338,6 +338,9 @@ class FinanceHealth(AtlasModel):
     reserva_meses: float | None = None  # patrimônio líquido / despesa média
     metas_ativas: int = 0
     progresso_metas: float = 0.0
+    dividas_total: float = 0.0
+    parcelas_mes: float = 0.0
+    categorias_estouradas: int = 0
 
 
 class FinanceSnapshot(AtlasModel):
@@ -347,6 +350,93 @@ class FinanceSnapshot(AtlasModel):
     contas: list[FinanceAccount] = Field(default_factory=list)
     metas: list[FinanceGoal] = Field(default_factory=list)
     recentes: list[FinanceTransaction] = Field(default_factory=list)
+    dividas: list["FinanceDebt"] = Field(default_factory=list)
+
+
+DebtKind = Literal["emprestimo", "cartao", "financiamento", "cheque_especial", "outro"]
+DebtStatus = Literal["ativa", "quitada", "pausada"]
+PayoffStrategy = Literal["avalanche", "bola_de_neve"]
+
+
+class FinanceDebt(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    name: str
+    kind: DebtKind = "emprestimo"
+    balance: float = Field(ge=0)
+    interest_rate_month: float = Field(default=0.0, ge=0)  # % a.m.
+    installment: float = Field(default=0.0, ge=0)
+    due_day: int = Field(default=1, ge=1, le=31)
+    lender: str = ""
+    notes: str = ""
+    status: DebtStatus = "ativa"
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class FinanceDebtCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    kind: DebtKind = "emprestimo"
+    balance: float = Field(ge=0)
+    interest_rate_month: float = Field(default=0.0, ge=0)
+    installment: float = Field(default=0.0, ge=0)
+    due_day: int = Field(default=1, ge=1, le=31)
+    lender: str = ""
+    notes: str = ""
+
+
+class FinanceDebtUpdate(BaseModel):
+    name: str | None = None
+    balance: float | None = Field(default=None, ge=0)
+    interest_rate_month: float | None = Field(default=None, ge=0)
+    installment: float | None = Field(default=None, ge=0)
+    due_day: int | None = Field(default=None, ge=1, le=31)
+    lender: str | None = None
+    notes: str | None = None
+    status: DebtStatus | None = None
+
+
+class FinanceBudgetCap(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    month: str  # YYYY-MM
+    category: str
+    limit_amount: float = Field(ge=0)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class FinanceBudgetCapCreate(BaseModel):
+    category: str = Field(min_length=1, max_length=80)
+    limit_amount: float = Field(ge=0)
+    month: str | None = None  # default = mês atual
+
+
+class FinanceBudgetStatus(AtlasModel):
+    month: str
+    caps: list[dict[str, Any]] = Field(default_factory=list)
+    total_limit: float = 0.0
+    total_spent: float = 0.0
+    estouradas: int = 0
+
+
+class DebtPayoffRequest(BaseModel):
+    strategy: PayoffStrategy = "avalanche"
+    extra_payment: float = Field(default=0.0, ge=0)
+    income_hint: float | None = Field(default=None, ge=0)
+
+
+class DebtPayoffPlan(AtlasModel):
+    strategy: PayoffStrategy
+    extra_payment: float = 0.0
+    total_debt: float = 0.0
+    min_payments: float = 0.0
+    monthly_firepower: float = 0.0
+    months_estimate: int | None = None
+    order: list[dict[str, Any]] = Field(default_factory=list)
+    cuts: list[dict[str, Any]] = Field(default_factory=list)
+    summary: str = ""
+    chat_opener: str = ""
 
 
 # --------------------------------------------------------------------------

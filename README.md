@@ -79,7 +79,8 @@ Regra de dependência: **cada camada só importa a de baixo**. `memory/` não sa
   - Material da trilha com OCR de PDF escaneado (Gemini)
 - **Domínio Financeiro**: contas, lançamentos, metas e saúde (Cap. 82–92)
   - Relatório mensal por categoria, transferência real entre contas
-  - Consultoria com Ayra (`POST /finance/start-with-ayra`)
+  - **Dívidas/empréstimos**, orçamento por categoria, **plano anti-dívida** (avalanche / bola de neve)
+  - Consultoria Ayra + `POST /finance/payoff-plan/start`
 - **Domínio Gabinete**: cidadãos, demandas, linha do tempo e agenda (Cap. 97–105)
   - Dossiê do cidadão, agenda com status, atrasadas, assessoria Ayra
 - **Biblioteca com PDF** (`.txt`, `.md`, `.pdf` via pypdf + OCR)

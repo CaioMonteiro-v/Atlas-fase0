@@ -290,6 +290,42 @@ CREATE TABLE IF NOT EXISTS finance_goals (
 
 CREATE INDEX IF NOT EXISTS idx_fin_goals_user ON finance_goals (user_id, status);
 
+-- Dívidas / empréstimos
+CREATE TABLE IF NOT EXISTS finance_debts (
+    id                   TEXT PRIMARY KEY,
+    user_id              TEXT NOT NULL,
+    name                 TEXT NOT NULL,
+    kind                 TEXT NOT NULL DEFAULT 'emprestimo'
+                         CHECK (kind IN ('emprestimo', 'cartao', 'financiamento', 'cheque_especial', 'outro')),
+    balance              REAL NOT NULL CHECK (balance >= 0),
+    interest_rate_month  REAL NOT NULL DEFAULT 0 CHECK (interest_rate_month >= 0),
+    installment          REAL NOT NULL DEFAULT 0 CHECK (installment >= 0),
+    due_day              INTEGER NOT NULL DEFAULT 1 CHECK (due_day >= 1 AND due_day <= 31),
+    lender               TEXT NOT NULL DEFAULT '',
+    notes                TEXT NOT NULL DEFAULT '',
+    status               TEXT NOT NULL DEFAULT 'ativa'
+                         CHECK (status IN ('ativa', 'quitada', 'pausada')),
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fin_debts_user ON finance_debts (user_id, status);
+
+-- Orçamento mensal por categoria
+CREATE TABLE IF NOT EXISTS finance_budget_caps (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    month         TEXT NOT NULL,
+    category      TEXT NOT NULL,
+    limit_amount  REAL NOT NULL CHECK (limit_amount >= 0),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fin_budget_cap
+    ON finance_budget_caps (user_id, month, category);
+CREATE INDEX IF NOT EXISTS idx_fin_budget_user ON finance_budget_caps (user_id, month);
+
 -- ---------------------------------------------------------------------
 -- Domínio Educação (Cap. 69–81) — estudo GERAL, não só idiomas
 -- Trilhas, sessões e competências. Idiomas são uma área entre muitas.
