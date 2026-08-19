@@ -103,6 +103,15 @@ def export(
     )
 
 
+@router.get("/dashboard")
+def dashboard(
+    user_id: str = Depends(current_user_id),
+    memory: MemoryService = Depends(get_memory),
+):
+    """Home do Atlas: jornada ativa, próximo passo, finanças, memória."""
+    return memory.dashboard(user_id)
+
+
 @router.post("/wipe")
 def wipe(
     confirm: str = Query(..., description="digite APAGAR TUDO para confirmar"),

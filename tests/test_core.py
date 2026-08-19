@@ -199,10 +199,398 @@ def test_audit() -> None:
     check("motivo gravado", log[0]["reason"] == "montar contexto")
 
 
+def test_finance() -> None:
+    print("\n[6] Domínio Financeiro (Cap. 82–92)")
+    from app.domain.models import FinanceAccount, FinanceGoal, FinanceTransaction
+    from app.finance.store import FinanceStore
+
+    db = make_db()
+    fin = FinanceStore(db)
+
+    acc = fin.create_account(FinanceAccount(
+        user_id=U, name="Corrente", kind="corrente", balance=1000.0,
+    ))
+    check("conta criada com saldo", fin.get_account(U, acc.id).balance == 1000.0)
+    check("outro usuário não vê a conta", fin.get_account(OTHER, acc.id) is None)
+
+    fin.add_transaction(FinanceTransaction(
+        user_id=U, account_id=acc.id, kind="despesa", amount=200.0,
+        category="moradia", description="aluguel",
+    ))
+    fin.add_transaction(FinanceTransaction(
+        user_id=U, account_id=acc.id, kind="receita", amount=500.0,
+        category="salario", description="pagamento",
+    ))
+    got = fin.get_account(U, acc.id)
+    check("saldo atualizado na mesma transação", abs(got.balance - 1300.0) < 0.01)
+
+    goal = fin.create_goal(FinanceGoal(
+        user_id=U, title="Reserva", target_amount=6000.0, current_amount=1500.0,
+    ))
+    check("progresso da meta", abs(goal.progress - 0.25) < 0.01)
+    upd = fin.update_goal_progress(U, goal.id, 6000.0)
+    check("meta conclui ao atingir alvo", upd is not None and upd.status == "concluida")
+
+    health = fin.health(U)
+    check("patrimônio no health", abs(health.patrimonio - 1300.0) < 0.01)
+    check("receita do mês", health.receita_mes >= 500.0)
+    check("despesa do mês", health.despesa_mes >= 200.0)
+    check("snapshot monta contexto", fin.snapshot(U).contas[0].id == acc.id)
+
+    poup = fin.create_account(FinanceAccount(
+        user_id=U, name="Poupança", kind="poupanca", balance=0.0,
+    ))
+    fin.add_transaction(FinanceTransaction(
+        user_id=U, account_id=acc.id, to_account_id=poup.id,
+        kind="transferencia", amount=100.0, category="transferencia", description="reserva",
+    ))
+    check("transferência debita origem", abs(fin.get_account(U, acc.id).balance - 1200.0) < 0.01)
+    check("transferência credita destino", abs(fin.get_account(U, poup.id).balance - 100.0) < 0.01)
+    report = fin.monthly_report(U)
+    check("relatório mensal tem despesas", report["despesa"] >= 200.0)
+    check("relatório por categoria", any(c["categoria"] == "moradia" for c in report["por_categoria"]))
+
+
+def test_session_journey_bind() -> None:
+    print("\n[7] Chat ↔ jornada")
+    db = make_db()
+    conv = ConversationStore(db)
+    js = JourneyStore(db)
+    j = js.create(Journey(
+        user_id=U, domain="educacao", title="Inglês",
+        stated_goal="aprender inglês", status="ativa",
+    ))
+    s = conv.ensure_session(U, "sess-1", journey_id=j.id)
+    check("sessão nasce amarrada à jornada", s.journey_id == j.id)
+    got = conv.get_session(U, "sess-1")
+    check("get_session devolve journey_id", got is not None and got.journey_id == j.id)
+    conv.ensure_session(U, "sess-2")
+    check("bind posterior funciona", conv.bind_journey(U, "sess-2", j.id))
+    check("sessão 2 amarrada", conv.get_session(U, "sess-2").journey_id == j.id)
+
+
+def test_pdf_extract() -> None:
+    print("\n[8] Extração de PDF")
+    import asyncio
+    from io import BytesIO
+
+    from pypdf import PdfWriter
+
+    from app.knowledge.extract import extract_document, extract_text_from_bytes
+    from app.llm.fake import FakeLLM
+
+    text, fmt = extract_text_from_bytes(
+        "nota.md",
+        "Conceito de juros compostos explicado em detalhe para o Atlas.".encode(),
+    )
+    check("texto puro funciona", fmt == "text" and "juros" in text)
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    buf = BytesIO()
+    writer.write(buf)
+    blank = buf.getvalue()
+    try:
+        extract_text_from_bytes("vazio.pdf", blank)
+        check("PDF sem texto deveria falhar sem OCR", False)
+    except ValueError:
+        check("PDF sem texto extraível é rejeitado sem OCR", True)
+
+    ocr_text, ocr_fmt = asyncio.run(extract_document("vazio.pdf", blank, ocr=FakeLLM().ocr))
+    check("OCR fake recupera PDF escaneado", ocr_fmt == "pdf-ocr" and "OCR" in ocr_text)
+
+
+def test_education_general() -> None:
+    print("\n[9] Domínio Educação — estudo GERAL + caderno + área livre")
+    from app.domain.models import Competency, StudyNote, StudySession, StudyTrack
+    from app.education.store import EducationStore
+
+    db = make_db()
+    edu = EducationStore(db)
+
+    calc = edu.create_track(StudyTrack(
+        user_id=U, title="Cálculo I", subject_area="Cálculo I",
+        goal="passar na prova", level="iniciante",
+    ))
+    direito = edu.create_track(StudyTrack(
+        user_id=U, title="Direito Constitucional", subject_area="Direito Constitucional",
+        goal="concurso", level="intermediario",
+    ))
+    fisio = edu.create_track(StudyTrack(
+        user_id=U, title="Fisioterapia respiratória", subject_area="Fisioterapia",
+        goal="prática clínica", level="iniciante",
+    ))
+    areas = {t.subject_area for t in edu.list_tracks(U)}
+    check("áreas livres (não lista fechada)", "Fisioterapia" in areas and "Direito Constitucional" in areas)
+    check("isolamento por usuário", edu.get_track(OTHER, calc.id) is None)
+
+    edu.add_session(StudySession(user_id=U, track_id=calc.id, minutes=50, notes="limites", topics=["limites"]))
+    edu.create_competency(Competency(
+        user_id=U, track_id=calc.id, name="Limites", subject_area="Cálculo I", level="praticar",
+    ))
+    edu.create_note(StudyNote(
+        user_id=U, track_id=direito.id, title="Legalidade",
+        topic="princípios", content="Administração só age conforme a lei.",
+    ))
+    snap = edu.snapshot(U)
+    check("snapshot tem 3 trilhas", len(snap.tracks_ativas) == 3)
+    check("minutos da semana", snap.minutos_semana >= 50)
+    check("caderno no snapshot", len(snap.notas_recentes) >= 1)
+    check("fisioterapia também entra", any(t.title.startswith("Fisio") for t in snap.tracks_ativas))
+
+
+def test_cabinet() -> None:
+    print("\n[10] Domínio Gabinete Inteligente")
+    from app.domain.models import CabinetCitizen, CabinetDemand, CabinetTimelineEvent
+    from app.cabinet.store import CabinetStore
+
+    db = make_db()
+    cab = CabinetStore(db)
+
+    cid = cab.create_citizen(CabinetCitizen(
+        user_id=U, name="Maria Silva", municipality="Sobral", contact="88 99999",
+    ))
+    dem = cab.create_demand(CabinetDemand(
+        user_id=U, citizen_id=cid.id, title="Pavimentação rua X",
+        municipality="Sobral", category="infraestrutura", priority="alta",
+    ))
+    cab.add_timeline(CabinetTimelineEvent(
+        user_id=U, citizen_id=cid.id, demand_id=dem.id, municipality="Sobral",
+        event_type="contato", title="Ligação recebida", description="Pediu retorno",
+    ))
+    check("demanda ligada ao cidadão", cab.get_demand(U, dem.id).citizen_id == cid.id)
+    check("outro usuário não vê demanda", cab.get_demand(OTHER, dem.id) is None)
+    cab.update_demand(U, dem.id, {"status": "em_andamento"})
+    check("status atualizado", cab.get_demand(U, dem.id).status == "em_andamento")
+    snap = cab.snapshot(U)
+    check("snapshot conta abertas", snap.demandas_abertas >= 1)
+    check("município no snapshot", "Sobral" in snap.municipios)
+    check("timeline do cidadão", len(cab.list_timeline(U, citizen_id=cid.id)) >= 1)
+
+    from datetime import timedelta
+    from app.domain.models import CabinetAgendaItem, utcnow
+    late = cab.create_demand(CabinetDemand(
+        user_id=U, title="Atrasada", municipality="Sobral",
+        priority="alta", due_date=utcnow() - timedelta(days=2),
+    ))
+    check("demanda atrasada detectada", any(d.id == late.id for d in cab.overdue_demands(U)))
+    ag = cab.create_agenda(CabinetAgendaItem(
+        user_id=U, title="Visita", municipality="Sobral",
+        starts_at=utcnow() + timedelta(days=1),
+    ))
+    cab.update_agenda(U, ag.id, status="realizado")
+    check("agenda marcada realizada", cab.list_agenda(U)[0].status == "realizado" or
+          next(a for a in cab.list_agenda(U, limit=50) if a.id == ag.id).status == "realizado")
+    snap2 = cab.snapshot(U)
+    check("snapshot conta atrasadas", snap2.demandas_atrasadas >= 1)
+
+
+def test_education_chapters_quiz() -> None:
+    print("\n[11] Capítulos + quiz + competência")
+    import asyncio
+
+    from app.domain.models import StudyTrack
+    from app.education.mentor import StudyMentor
+    from app.llm.fake import FakeLLM
+    from app.memory.service import MemoryService
+
+    db = make_db()
+    mem = MemoryService(db, FakeLLM())
+    mentor = StudyMentor(mem, FakeLLM())
+    track = mem.education.create_track(StudyTrack(
+        user_id=U, title="Psicologia cognitiva", subject_area="Psicologia",
+        goal="entender memória de trabalho", level="iniciante",
+    ))
+
+    chapters = asyncio.run(mentor.generate_chapters(U, track.id))
+    check("gerou capítulos", len(chapters) >= 4)
+    chapters2 = asyncio.run(mentor.generate_chapters(U, track.id))
+    check("não duplica capítulos", len(chapters2) == len(chapters))
+
+    quiz = asyncio.run(mentor.generate_quiz(U, track.id, chapter_id=chapters[0].id))
+    check("quiz tem perguntas", len(quiz.questions) >= 2)
+
+    graded = asyncio.run(mentor.grade_quiz(U, quiz.id, [
+        {"question_id": q.id, "resposta": "explicação do aluno"} for q in quiz.questions
+    ]))
+    check("quiz corrigido", graded.status == "corrigido" and graded.score is not None)
+    comps = mem.education.list_competencies(U)
+    check("competência registrada após quiz", len(comps) >= 1)
+
+
+def test_study_mature_pack() -> None:
+    print("\n[12] Revisão + plano semanal + progresso + simulado")
+    import asyncio
+    from datetime import timedelta
+
+    from app.domain.models import StudyNote, StudySession, StudyTrack, StudyWeeklyPlan, utcnow
+    from app.education.mentor import StudyMentor
+    from app.llm.fake import FakeLLM
+    from app.memory.service import MemoryService
+
+    db = make_db()
+    mem = MemoryService(db, FakeLLM())
+    mentor = StudyMentor(mem, FakeLLM())
+    track = mem.education.create_track(StudyTrack(
+        user_id=U, title="Biologia celular", subject_area="Biologia",
+        goal="entender organelas", level="iniciante",
+    ))
+    chapters = asyncio.run(mentor.generate_chapters(U, track.id))
+    mem.education.set_chapter_status(U, chapters[0].id, "concluido")
+    mem.education.add_session(StudySession(
+        user_id=U, track_id=track.id, minutes=40, notes="mitocôndria",
+    ))
+    note = mem.education.create_note(StudyNote(
+        user_id=U, track_id=track.id, title="Mitocôndria",
+        topic="organelas", content="Produz ATP via respiração celular.",
+    ))
+    # cartão nasce com next_review amanhã — força vencido
+    cards = mem.education.list_due_reviews(U)
+    check("cartão ainda não venceu (amanhã)", len(cards) == 0)
+    with mem.education.db.tx() as c:
+        c.execute(
+            "UPDATE study_review_cards SET next_review_at = ? WHERE note_id = ?",
+            ((utcnow() - timedelta(hours=1)).isoformat(), note.id),
+        )
+    due = mem.education.list_due_reviews(U)
+    check("revisão vencida aparece", len(due) == 1)
+    graded = mem.education.grade_review(U, due[0].id, "good")
+    check("SM-2 avança intervalo", graded is not None and graded.interval_days >= 1)
+
+    week = mem.education.monday_of()
+    mem.education.upsert_weekly_plan(StudyWeeklyPlan(
+        user_id=U, track_id=None, week_start=week,
+        target_minutes=120, target_sessions=2,
+    ))
+    status = mem.education.weekly_plan_status(U)
+    check("plano semanal tem progresso", status["minutes_done"] >= 40)
+    check("pct minutos calculado", status["pct_minutes"] > 0)
+
+    prog = mem.education.track_progress(U, track.id)
+    check("progresso % capítulos", prog is not None and prog.chapters_pct > 0)
+    check("mapa de capítulos", len(prog.chapters) == len(chapters))
+
+    sim = asyncio.run(mentor.generate_simulado(U, track.id))
+    check("simulado criado", sim.title.lower().startswith("simulado") and len(sim.questions) >= 2)
+
+    snap = mem.education.snapshot(U)
+    check("snapshot traz revisões e plano", snap.plano_semana is not None)
+
+
+def test_finance_debts_budget_payoff() -> None:
+    print("\n[14] Dívidas + orçamento + plano de quitação")
+    import asyncio
+
+    from app.domain.models import (
+        FinanceAccount, FinanceBudgetCap, FinanceDebt, FinanceTransaction,
+    )
+    from app.finance.payoff import build_payoff_plan
+    from app.finance.store import FinanceStore
+    from app.llm.fake import FakeLLM
+    from app.memory.service import MemoryService
+
+    db = make_db()
+    fin = FinanceStore(db)
+    acc = fin.create_account(FinanceAccount(user_id=U, name="Corrente", balance=800))
+    fin.add_transaction(FinanceTransaction(
+        user_id=U, account_id=acc.id, kind="receita", amount=3000, category="salario",
+    ))
+    fin.add_transaction(FinanceTransaction(
+        user_id=U, account_id=acc.id, kind="despesa", amount=900, category="mercado",
+    ))
+    fin.add_transaction(FinanceTransaction(
+        user_id=U, account_id=acc.id, kind="despesa", amount=400, category="lazer",
+    ))
+    fin.create_debt(FinanceDebt(
+        user_id=U, name="Empréstimo caro", kind="emprestimo",
+        balance=5000, interest_rate_month=3.5, installment=350,
+    ))
+    fin.create_debt(FinanceDebt(
+        user_id=U, name="Cartão", kind="cartao",
+        balance=1200, interest_rate_month=12.0, installment=200,
+    ))
+    fin.upsert_budget_cap(FinanceBudgetCap(
+        user_id=U, month=fin.current_month(), category="lazer", limit_amount=200,
+    ))
+    budget = fin.budget_status(U)
+    check("orçamento detecta estouro", budget["estouradas"] >= 1)
+    health = fin.health(U)
+    check("health soma dívidas", health.dividas_total >= 6200)
+    check("health soma parcelas", health.parcelas_mes >= 550)
+
+    mem = MemoryService(db, FakeLLM())
+    plan = asyncio.run(build_payoff_plan(mem, FakeLLM(), U, strategy="avalanche", extra_payment=300))
+    check("plano lista dívidas", len(plan.order) == 2)
+    check("avalanche ataca maior juros", plan.order[0]["name"] == "Cartão")
+    check("sugeriu cortes", len(plan.cuts) >= 1)
+    check("tem opener", "dívid" in plan.chat_opener.lower() or "dividas" in plan.chat_opener.lower() or len(plan.chat_opener) > 30)
+
+    plan2 = asyncio.run(build_payoff_plan(mem, FakeLLM(), U, strategy="bola_de_neve", extra_payment=100))
+    check("bola de neve ataca menor saldo", plan2.order[0]["name"] == "Cartão" or plan2.order[0]["balance"] <= plan2.order[1]["balance"])
+
+
+def test_morning_briefing() -> None:
+    print("\n[13] Ayra do dia seguinte")
+    import asyncio
+    from datetime import timedelta
+
+    from app.ayra.morning import MorningBriefingService
+    from app.domain.models import CabinetDemand, StudyNote, StudyTrack, utcnow
+    from app.llm.fake import FakeLLM
+    from app.memory.service import MemoryService
+
+    db = make_db()
+    mem = MemoryService(db, FakeLLM())
+    svc = MorningBriefingService(db, mem, FakeLLM())
+
+    # sem sinais → foco genérico
+    brief0 = asyncio.run(svc.build(U))
+    check("cria briefing do dia", brief0.day and brief0.action_text)
+    brief0b = asyncio.run(svc.build(U))
+    check("não regenera se pending", brief0b.id == brief0.id)
+
+    # demanda atrasada vence a prioridade
+    mem.cabinet.create_demand(CabinetDemand(
+        user_id=U, title="Ofício urgente", municipality="Sobral",
+        priority="urgente", due_date=utcnow() - timedelta(days=1),
+    ))
+    brief1 = asyncio.run(svc.build(U, force=True))
+    check("prioriza demanda atrasada", brief1.domain == "gabinete")
+    check("tem opener de chat", len(brief1.chat_opener) > 20)
+
+    track = mem.education.create_track(StudyTrack(
+        user_id=U, title="Cálculo", subject_area="Cálculo", level="iniciante",
+    ))
+    note = mem.education.create_note(StudyNote(
+        user_id=U, track_id=track.id, title="Limites",
+        content="Limite é o valor que a função se aproxima.",
+    ))
+    with mem.education.db.tx() as c:
+        c.execute(
+            "UPDATE study_review_cards SET next_review_at = ? WHERE note_id = ?",
+            ((utcnow() - timedelta(hours=2)).isoformat(), note.id),
+        )
+
+    payload = svc.start_payload(brief1)
+    check("start abre sessão", bool(payload["session_id"] and payload["mensagem_sugerida"]))
+    done = svc.mark(U, "done")
+    check("marca feito", done is not None and done.status == "done")
+
+
 if __name__ == "__main__":
     test_conversational()
     test_personal()
     test_knowledge_graph()
     test_journeys()
     test_audit()
+    test_finance()
+    test_session_journey_bind()
+    test_pdf_extract()
+    test_education_general()
+    test_cabinet()
+    test_education_chapters_quiz()
+    test_study_mature_pack()
+    test_morning_briefing()
+    test_finance_debts_budget_payoff()
     print("\nTodos os testes passaram.\n")
+

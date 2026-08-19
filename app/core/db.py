@@ -65,6 +65,10 @@ class Database:
     def migrate(self) -> None:
         conn = self.connect()
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        # Colunas novas em bancos já existentes (CREATE IF NOT EXISTS não altera)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(finance_transactions)").fetchall()}
+        if "to_account_id" not in cols:
+            conn.execute("ALTER TABLE finance_transactions ADD COLUMN to_account_id TEXT")
         conn.commit()
 
     def close(self) -> None:

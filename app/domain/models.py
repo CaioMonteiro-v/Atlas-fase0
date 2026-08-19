@@ -217,6 +217,10 @@ class JourneyCreate(BaseModel):
     project_id: str | None = None
 
 
+class JourneyStatusUpdate(BaseModel):
+    status: JourneyStatus
+
+
 class Project(AtlasModel):
     id: str = Field(default_factory=new_id)
     user_id: str
@@ -229,12 +233,666 @@ class Project(AtlasModel):
 
 
 # --------------------------------------------------------------------------
+# Domínio Financeiro (Cap. 82–92)
+# --------------------------------------------------------------------------
+FinanceAccountKind = Literal["corrente", "poupanca", "investimento", "carteira", "cartao", "outro"]
+FinanceTxKind = Literal["receita", "despesa", "transferencia"]
+FinanceGoalStatus = Literal["ativa", "concluida", "pausada", "abandonada"]
+
+
+class FinanceAccount(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    name: str
+    kind: FinanceAccountKind = "corrente"
+    currency: str = "BRL"
+    balance: float = 0.0
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class FinanceAccountCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    kind: FinanceAccountKind = "corrente"
+    currency: str = "BRL"
+    balance: float = 0.0
+
+
+class FinanceTransaction(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    account_id: str
+    to_account_id: str | None = None
+    kind: FinanceTxKind
+    amount: float = Field(gt=0)
+    category: str = "geral"
+    description: str = ""
+    occurred_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class FinanceTransactionCreate(BaseModel):
+    account_id: str
+    kind: FinanceTxKind
+    amount: float = Field(gt=0)
+    category: str = "geral"
+    description: str = ""
+    occurred_at: datetime | None = None
+    to_account_id: str | None = None  # obrigatório em transferencia
+
+
+class FinanceReport(AtlasModel):
+    """Fluxo mensal por categoria — visão madura do domínio financeiro."""
+
+    month: str  # YYYY-MM
+    receita: float = 0.0
+    despesa: float = 0.0
+    poupanca: float = 0.0
+    por_categoria: list[dict[str, Any]] = Field(default_factory=list)
+    lancamentos: int = 0
+
+
+class StartFinanceWithAyra(BaseModel):
+    goal: str = Field(min_length=3, max_length=400)
+    focus: Literal["organizar", "reserva", "dividas", "investir", "orcamento"] = "organizar"
+
+
+class FinanceGoal(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    journey_id: str | None = None
+    title: str
+    target_amount: float = Field(gt=0)
+    current_amount: float = 0.0
+    deadline: datetime | None = None
+    status: FinanceGoalStatus = "ativa"
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+    @property
+    def progress(self) -> float:
+        if self.target_amount <= 0:
+            return 0.0
+        return round(min(1.0, self.current_amount / self.target_amount), 2)
+
+
+class FinanceGoalCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    target_amount: float = Field(gt=0)
+    current_amount: float = 0.0
+    deadline: datetime | None = None
+    journey_id: str | None = None
+
+
+class FinanceHealth(AtlasModel):
+    """Cap. 92 — indicadores de saúde financeira (calculados, não persistidos)."""
+
+    patrimonio: float = 0.0
+    receita_mes: float = 0.0
+    despesa_mes: float = 0.0
+    poupanca_mes: float = 0.0
+    taxa_poupanca: float = 0.0          # 0..1
+    comprometimento: float = 0.0        # despesa / receita, 0..n
+    reserva_meses: float | None = None  # patrimônio líquido / despesa média
+    metas_ativas: int = 0
+    progresso_metas: float = 0.0
+    dividas_total: float = 0.0
+    parcelas_mes: float = 0.0
+    categorias_estouradas: int = 0
+
+
+class FinanceSnapshot(AtlasModel):
+    """Resumo que a Ayra injeta no contexto quando o domínio financeiro importa."""
+
+    health: FinanceHealth
+    contas: list[FinanceAccount] = Field(default_factory=list)
+    metas: list[FinanceGoal] = Field(default_factory=list)
+    recentes: list[FinanceTransaction] = Field(default_factory=list)
+    dividas: list["FinanceDebt"] = Field(default_factory=list)
+
+
+DebtKind = Literal["emprestimo", "cartao", "financiamento", "cheque_especial", "outro"]
+DebtStatus = Literal["ativa", "quitada", "pausada"]
+PayoffStrategy = Literal["avalanche", "bola_de_neve"]
+
+
+class FinanceDebt(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    name: str
+    kind: DebtKind = "emprestimo"
+    balance: float = Field(ge=0)
+    interest_rate_month: float = Field(default=0.0, ge=0)  # % a.m.
+    installment: float = Field(default=0.0, ge=0)
+    due_day: int = Field(default=1, ge=1, le=31)
+    lender: str = ""
+    notes: str = ""
+    status: DebtStatus = "ativa"
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class FinanceDebtCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    kind: DebtKind = "emprestimo"
+    balance: float = Field(ge=0)
+    interest_rate_month: float = Field(default=0.0, ge=0)
+    installment: float = Field(default=0.0, ge=0)
+    due_day: int = Field(default=1, ge=1, le=31)
+    lender: str = ""
+    notes: str = ""
+
+
+class FinanceDebtUpdate(BaseModel):
+    name: str | None = None
+    balance: float | None = Field(default=None, ge=0)
+    interest_rate_month: float | None = Field(default=None, ge=0)
+    installment: float | None = Field(default=None, ge=0)
+    due_day: int | None = Field(default=None, ge=1, le=31)
+    lender: str | None = None
+    notes: str | None = None
+    status: DebtStatus | None = None
+
+
+class FinanceBudgetCap(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    month: str  # YYYY-MM
+    category: str
+    limit_amount: float = Field(ge=0)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class FinanceBudgetCapCreate(BaseModel):
+    category: str = Field(min_length=1, max_length=80)
+    limit_amount: float = Field(ge=0)
+    month: str | None = None  # default = mês atual
+
+
+class FinanceBudgetStatus(AtlasModel):
+    month: str
+    caps: list[dict[str, Any]] = Field(default_factory=list)
+    total_limit: float = 0.0
+    total_spent: float = 0.0
+    estouradas: int = 0
+
+
+class DebtPayoffRequest(BaseModel):
+    strategy: PayoffStrategy = "avalanche"
+    extra_payment: float = Field(default=0.0, ge=0)
+    income_hint: float | None = Field(default=None, ge=0)
+
+
+class DebtPayoffPlan(AtlasModel):
+    strategy: PayoffStrategy
+    extra_payment: float = 0.0
+    total_debt: float = 0.0
+    min_payments: float = 0.0
+    monthly_firepower: float = 0.0
+    months_estimate: int | None = None
+    order: list[dict[str, Any]] = Field(default_factory=list)
+    cuts: list[dict[str, Any]] = Field(default_factory=list)
+    summary: str = ""
+    chat_opener: str = ""
+
+
+# --------------------------------------------------------------------------
+# Domínio Educação (Cap. 69–81) — estudo GERAL
+# Qualquer área do conhecimento: direito, cálculo, psicologia, fisioterapia…
+# SUBJECT_SUGGESTIONS são só sugestões de UI — a área é TEXTO LIVRE.
+# --------------------------------------------------------------------------
+StudyLevel = Literal["iniciante", "intermediario", "avancado"]
+StudyTrackStatus = Literal["ativa", "pausada", "concluida", "abandonada"]
+CompetencyLevel = Literal["iniciar", "praticar", "proficiente", "dominio"]
+CompetencyStatus = Literal["em_desenvolvimento", "adquirida", "a_revisar"]
+
+SUBJECT_SUGGESTIONS = (
+    "direito", "matematica", "fisica", "quimica", "biologia", "medicina",
+    "fisioterapia", "psicologia", "enfermagem", "historia", "filosofia",
+    "administracao", "economia", "programacao", "engenharia",
+    "inteligencia_artificial", "idiomas", "musica", "artes", "concursos",
+    "pedagogia", "arquitetura", "outro",
+)
+# Compat: código antigo importava SUBJECT_AREAS
+SUBJECT_AREAS = SUBJECT_SUGGESTIONS
+
+
+class StudyTrack(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    journey_id: str | None = None
+    title: str
+    subject_area: str = "geral"  # texto livre — qualquer área do conhecimento
+    level: StudyLevel = "iniciante"
+    goal: str = ""
+    status: StudyTrackStatus = "ativa"
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class StudyTrackCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    subject_area: str = Field(default="geral", min_length=1, max_length=120)
+    level: StudyLevel = "iniciante"
+    goal: str = ""
+    journey_id: str | None = None
+
+
+class StudySession(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str
+    minutes: int = Field(gt=0)
+    notes: str = ""
+    topics: list[str] = Field(default_factory=list)
+    occurred_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class StudySessionCreate(BaseModel):
+    track_id: str
+    minutes: int = Field(gt=0, le=24 * 60)
+    notes: str = ""
+    topics: list[str] = Field(default_factory=list)
+    occurred_at: datetime | None = None
+
+
+class StudyNote(AtlasModel):
+    """Anotação do que o aluno aprendeu — caderno vivo da mentoria."""
+
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str
+    session_id: str | None = None
+    title: str = ""
+    content: str
+    topic: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class StudyNoteCreate(BaseModel):
+    track_id: str
+    content: str = Field(min_length=1, max_length=20_000)
+    title: str = ""
+    topic: str = ""
+    session_id: str | None = None
+
+
+class Competency(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str | None = None
+    name: str
+    subject_area: str = "geral"
+    level: CompetencyLevel = "iniciar"
+    evidence: str = ""
+    status: CompetencyStatus = "em_desenvolvimento"
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class CompetencyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    subject_area: str = Field(default="geral", min_length=1, max_length=120)
+    level: CompetencyLevel = "iniciar"
+    evidence: str = ""
+    track_id: str | None = None
+
+
+class StartStudyWithAyra(BaseModel):
+    """Quero aprender X → trilha + jornada + sessão com a Ayra mentora."""
+
+    topic: str = Field(min_length=2, max_length=200, description="Ex.: Direito Constitucional, Cálculo 1, Fisioterapia")
+    goal: str = ""
+    level: StudyLevel = "iniciante"
+    subject_area: str = ""  # se vazio, usa o próprio topic
+
+
+class StudyChapter(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str
+    order_index: int = 0
+    title: str
+    summary: str = ""
+    objectives: list[str] = Field(default_factory=list)
+    status: Literal["pendente", "em_progresso", "concluido"] = "pendente"
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class StudyChapterCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    summary: str = ""
+    objectives: list[str] = Field(default_factory=list)
+
+
+class PlannedChapter(BaseModel):
+    title: str
+    summary: str = ""
+    objectives: list[str] = Field(default_factory=list)
+
+
+class ChapterPlan(BaseModel):
+    chapters: list[PlannedChapter] = Field(default_factory=list)
+
+
+class QuizQuestion(BaseModel):
+    id: str = Field(default_factory=new_id)
+    pergunta: str
+    opcoes: list[str] = Field(default_factory=list)  # vazio = resposta aberta
+    resposta_esperada: str = ""
+    explicacao: str = ""
+
+
+class QuizAnswer(BaseModel):
+    question_id: str
+    resposta: str
+    correto: bool | None = None
+    feedback: str = ""
+
+
+class StudyQuiz(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str
+    chapter_id: str | None = None
+    title: str
+    questions: list[QuizQuestion] = Field(default_factory=list)
+    answers: list[QuizAnswer] = Field(default_factory=list)
+    score: float | None = None
+    status: Literal["aberto", "corrigido"] = "aberto"
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class QuizGradeItem(BaseModel):
+    question_id: str
+    correto: bool
+    feedback: str = ""
+
+
+class QuizGradeResult(BaseModel):
+    itens: list[QuizGradeItem] = Field(default_factory=list)
+    competencia_sugerida: str = ""
+    nivel_sugerido: CompetencyLevel = "praticar"
+
+
+class QuizSubmit(BaseModel):
+    answers: list[dict] = Field(default_factory=list)  # [{question_id, resposta}]
+
+
+class PlannedQuiz(BaseModel):
+    title: str = "Checagem de compreensão"
+    questions: list[QuizQuestion] = Field(default_factory=list)
+
+
+class StudyMaterial(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str
+    node_id: str | None = None
+    title: str
+    formato: str = "text"
+    status: Literal["processando", "pronto", "erro"] = "processando"
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class EducationSnapshot(AtlasModel):
+    tracks_ativas: list[StudyTrack] = Field(default_factory=list)
+    sessoes_recentes: list[StudySession] = Field(default_factory=list)
+    competencias: list[Competency] = Field(default_factory=list)
+    notas_recentes: list[StudyNote] = Field(default_factory=list)
+    proximos_capitulos: list[StudyChapter] = Field(default_factory=list)
+    revisoes_vencidas: int = 0
+    plano_semana: dict[str, Any] | None = None
+    capitulos_pendentes: int = 0
+    quizzes_abertos: int = 0
+    minutos_semana: int = 0
+    areas: list[str] = Field(default_factory=list)
+
+
+class StudyReviewCard(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str
+    note_id: str | None = None
+    chapter_id: str | None = None
+    prompt: str
+    answer: str = ""
+    ease: float = 2.5
+    interval_days: int = 1
+    repetitions: int = 0
+    next_review_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ReviewGrade(BaseModel):
+    rating: Literal["again", "hard", "good", "easy"] = "good"
+
+
+class StudyWeeklyPlan(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    track_id: str | None = None
+    week_start: str  # YYYY-MM-DD (segunda)
+    target_minutes: int = 180
+    target_sessions: int = 3
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class StudyWeeklyPlanCreate(BaseModel):
+    target_minutes: int = Field(default=180, ge=30, le=2000)
+    target_sessions: int = Field(default=3, ge=1, le=21)
+    track_id: str | None = None
+
+
+class TrackProgress(AtlasModel):
+    track_id: str
+    title: str
+    subject_area: str
+    chapters_total: int = 0
+    chapters_done: int = 0
+    chapters_pct: float = 0.0
+    notes: int = 0
+    quizzes: int = 0
+    quiz_avg_score: float | None = None
+    materials: int = 0
+    reviews_due: int = 0
+    minutes_week: int = 0
+    chapters: list[StudyChapter] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# Domínio Gabinete Inteligente (Cap. 97–105)
+# --------------------------------------------------------------------------
+DemandPriority = Literal["baixa", "media", "alta", "urgente"]
+DemandStatus = Literal["aberta", "em_andamento", "aguardando", "concluida", "arquivada"]
+TimelineEventType = Literal["contato", "demanda", "documento", "visita", "reuniao", "retorno", "nota"]
+AgendaStatus = Literal["agendado", "realizado", "cancelado"]
+
+
+class CabinetCitizen(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    name: str
+    municipality: str = ""
+    contact: str = ""
+    notes: str = ""
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class CabinetCitizenCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    municipality: str = ""
+    contact: str = ""
+    notes: str = ""
+
+
+class CabinetDemand(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    citizen_id: str | None = None
+    title: str
+    subject: str = ""
+    municipality: str = ""
+    category: str = "geral"
+    priority: DemandPriority = "media"
+    status: DemandStatus = "aberta"
+    origin: str = ""
+    assignee: str = ""
+    due_date: datetime | None = None
+    result: str = ""
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class CabinetDemandCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    subject: str = ""
+    municipality: str = ""
+    category: str = "geral"
+    priority: DemandPriority = "media"
+    citizen_id: str | None = None
+    origin: str = ""
+    assignee: str = ""
+    due_date: datetime | None = None
+
+
+class CabinetDemandUpdate(BaseModel):
+    status: DemandStatus | None = None
+    priority: DemandPriority | None = None
+    assignee: str | None = None
+    result: str | None = None
+    subject: str | None = None
+
+
+class CabinetTimelineEvent(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    citizen_id: str | None = None
+    demand_id: str | None = None
+    municipality: str = ""
+    event_type: TimelineEventType = "nota"
+    title: str
+    description: str = ""
+    occurred_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class CabinetTimelineCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    event_type: TimelineEventType = "nota"
+    description: str = ""
+    citizen_id: str | None = None
+    demand_id: str | None = None
+    municipality: str = ""
+    occurred_at: datetime | None = None
+
+
+class CabinetAgendaItem(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    title: str
+    municipality: str = ""
+    related_demand_id: str | None = None
+    starts_at: datetime
+    notes: str = ""
+    status: AgendaStatus = "agendado"
+    privacy: Privacy = Privacy.PRIVATE
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class CabinetAgendaCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    starts_at: datetime
+    municipality: str = ""
+    related_demand_id: str | None = None
+    notes: str = ""
+
+
+class CabinetSnapshot(AtlasModel):
+    demandas_abertas: int = 0
+    demandas_urgentes: int = 0
+    demandas_atrasadas: int = 0
+    municipios: list[str] = Field(default_factory=list)
+    recentes: list[CabinetDemand] = Field(default_factory=list)
+    agenda: list[CabinetAgendaItem] = Field(default_factory=list)
+    proximo_compromisso: CabinetAgendaItem | None = None
+
+
+class CabinetAgendaUpdate(BaseModel):
+    status: AgendaStatus | None = None
+    notes: str | None = None
+
+
+class StartCabinetWithAyra(BaseModel):
+    topic: str = Field(min_length=3, max_length=400)
+    municipality: str = ""
+    demand_id: str | None = None
+
+
+# --------------------------------------------------------------------------
+# Planejamento de jornada pela Ayra (Cap. 20, Etapa 3)
+# --------------------------------------------------------------------------
+class PlannedStep(BaseModel):
+    title: str
+    description: str = ""
+
+
+class JourneyPlan(BaseModel):
+    real_goal: str
+    diagnosis: dict[str, Any] = Field(default_factory=dict)
+    steps: list[PlannedStep] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# Ayra do dia seguinte
+# --------------------------------------------------------------------------
+BriefingStatus = Literal["pending", "done", "skipped"]
+
+
+class DailyBriefing(AtlasModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    day: str  # YYYY-MM-DD
+    domain: str = "geral"
+    view: str = "ayra"  # education | finance | cabinet | journeys | ayra
+    title: str
+    action_text: str
+    reason: str = ""
+    minutes: int = 15
+    status: BriefingStatus = "pending"
+    journey_id: str | None = None
+    ref_id: str | None = None
+    chat_opener: str = ""
+    signals: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+# --------------------------------------------------------------------------
 # Contexto que a Ayra monta antes de falar (Cap. 115 — ponto único de entrada)
 # --------------------------------------------------------------------------
 class AyraContext(AtlasModel):
     personal: list[PersonalMemory] = Field(default_factory=list)
     knowledge: list[SearchHit] = Field(default_factory=list)
     journey: Journey | None = None
+    finance: FinanceSnapshot | None = None
+    education: EducationSnapshot | None = None
+    cabinet: CabinetSnapshot | None = None
     history: list[Turn] = Field(default_factory=list)
 
     def sources(self) -> list[dict[str, str]]:
@@ -244,4 +902,19 @@ class AyraContext(AtlasModel):
         out += [{"tipo": "conhecimento", "id": h.node.id, "rotulo": h.node.title} for h in self.knowledge]
         if self.journey:
             out.append({"tipo": "jornada", "id": self.journey.id, "rotulo": self.journey.title})
+        if self.finance:
+            out.append({
+                "tipo": "financas",
+                "id": "snapshot",
+                "rotulo": f"patrimônio R$ {self.finance.health.patrimonio:,.2f}",
+            })
+        if self.education:
+            areas = ", ".join(self.education.areas[:3]) or "estudos"
+            out.append({"tipo": "educacao", "id": "snapshot", "rotulo": areas})
+        if self.cabinet:
+            out.append({
+                "tipo": "gabinete",
+                "id": "snapshot",
+                "rotulo": f"{self.cabinet.demandas_abertas} demandas abertas",
+            })
         return out

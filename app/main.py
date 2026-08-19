@@ -26,9 +26,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import chat, journeys, memory as memory_routes
+from app.api import cabinet, chat, education, finance, journeys, memory as memory_routes, morning
+from app.api import auth as auth_routes
 from app.core.config import get_settings
 from app.core.db import Database
+from app.core.security import auth_required
 from app.llm.fake import FakeLLM
 from app.llm.gemini import GeminiLLM
 from app.memory.service import MemoryService
@@ -74,8 +76,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Atlas / Ayra",
-    version="0.1.0",
-    description="Núcleo de memória portátil e independente de modelo.",
+    version="0.3.0",
+    description=(
+        "Plataforma de inteligência: memória, jornadas, educação (estudo geral), "
+        "finanças e gabinete — com a Ayra no centro."
+    ),
     lifespan=lifespan,
 )
 
@@ -87,9 +92,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_routes.router)
 app.include_router(chat.router)
 app.include_router(memory_routes.router)
 app.include_router(journeys.router)
+app.include_router(finance.router)
+app.include_router(education.router)
+app.include_router(cabinet.router)
+app.include_router(morning.router)
 
 
 @app.exception_handler(Exception)
@@ -105,7 +115,14 @@ async def unhandled(request: Request, exc: Exception):
 
 @app.get("/health", tags=["infra"])
 async def health(request: Request):
-    return {"status": "ok", "llm": request.app.state.llm.name}
+    settings = get_settings()
+    llm = getattr(request.app.state, "llm", None)
+    return {
+        "status": "ok",
+        "llm": getattr(llm, "name", "n/a"),
+        "auth_required": auth_required(settings),
+        "open_access": settings.open_access,
+    }
 
 
 # ---------------------------------------------------------------------------

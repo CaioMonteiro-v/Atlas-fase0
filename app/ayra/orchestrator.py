@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator
 
 from pydantic import BaseModel, Field
 
-from app.domain.models import AyraContext, PersonalMemory, Privacy
+from app.domain.models import AyraContext, Journey, PersonalMemory, Privacy
 from app.llm.base import LLM, Message
 from app.memory.service import MemoryService
 
@@ -75,6 +75,80 @@ def build_prompt(ctx: AyraContext, question: str) -> tuple[str, list[Message]]:
         )
         blocks.append(f"## Conhecimento relevante da biblioteca dele\n{linhas}")
 
+    if ctx.finance:
+        h = ctx.finance.health
+        metas = "\n".join(
+            f"- {g.title}: R$ {g.current_amount:,.2f} / R$ {g.target_amount:,.2f} ({int(g.progress * 100)}%)"
+            for g in ctx.finance.metas
+        ) or "- nenhuma meta ativa"
+        blocks.append(
+            f"## Situação financeira (Domínio Financeiro)\n"
+            f"Patrimônio: R$ {h.patrimonio:,.2f}\n"
+            f"Receita do mês: R$ {h.receita_mes:,.2f} | Despesa: R$ {h.despesa_mes:,.2f}\n"
+            f"Taxa de poupança: {h.taxa_poupanca:.0%} | Comprometimento: {h.comprometimento:.0%}\n"
+            f"Reserva estimada: {h.reserva_meses if h.reserva_meses is not None else 'n/d'} meses\n"
+            f"Metas:\n{metas}\n"
+            f"Você está no papel de consultora financeira: explique, simule, oriente — "
+            f"nunca decida por ele. Lembre que investimentos envolvem risco."
+        )
+
+    if ctx.education:
+        e = ctx.education
+        trilhas = "\n".join(
+            f"- [{t.subject_area}] {t.title} ({t.level}) — objetivo: {t.goal or '—'}"
+            for t in e.tracks_ativas
+        ) or "- nenhuma trilha ativa"
+        comps = "\n".join(
+            f"- {c.name} ({c.subject_area}): {c.level} / {c.status}"
+            for c in e.competencias[:6]
+        ) or "- sem competências registradas"
+        notas = "\n".join(
+            f"- {n.title or n.topic or 'nota'}: {n.content[:180]}"
+            for n in e.notas_recentes[:5]
+        ) or "- ainda sem anotações do aluno"
+        caps = "\n".join(
+            f"- [{c.status}] {c.title}: {c.summary[:120]}"
+            for c in e.proximos_capitulos[:4]
+        ) or "- capítulos ainda não gerados"
+        blocks.append(
+            f"## Estudos — você é a MENTORA (Cap. 61)\n"
+            f"O aluno quer APRENDER de verdade, em qualquer área do conhecimento "
+            f"(direito, cálculo, psicologia, fisioterapia, biologia, programação…).\n"
+            f"Minutos esta semana: {e.minutos_semana} | Capítulos pendentes: {e.capitulos_pendentes}\n"
+            f"Áreas ativas: {', '.join(e.areas) or 'nenhuma'}\n"
+            f"Trilhas:\n{trilhas}\n"
+            f"Próximos capítulos:\n{caps}\n"
+            f"Competências:\n{comps}\n"
+            f"O que ele já anotou que aprendeu:\n{notas}\n\n"
+            f"Como ensinar:\n"
+            f"1. Foque no capítulo atual (ou no fundamento se não houver).\n"
+            f"2. Explique com clareza (sem enrolação).\n"
+            f"3. Dê 1 exemplo concreto da área dele.\n"
+            f"4. Faça 1 pergunta de checagem — só avance se ele demonstrar compreensão.\n"
+            f"5. Incentive anotar no caderno e fazer o quiz do capítulo.\n"
+            f"6. Se houver material na biblioteca da trilha, use-o como fonte prioritária."
+        )
+
+    if ctx.cabinet:
+        c = ctx.cabinet
+        dems = "\n".join(
+            f"- [{d.priority}/{d.status}] {d.title} ({d.municipality or 's/ município'})"
+            for d in c.recentes[:6]
+        ) or "- nenhuma demanda recente"
+        agenda = "\n".join(
+            f"- {a.starts_at}: {a.title} ({a.municipality or '—'})"
+            for a in c.agenda[:5]
+        ) or "- agenda vazia"
+        blocks.append(
+            f"## Gabinete Inteligente (Domínio Governamental)\n"
+            f"Demandas abertas: {c.demandas_abertas} (urgentes/altas: {c.demandas_urgentes})\n"
+            f"Municípios: {', '.join(c.municipios) or '—'}\n"
+            f"Demandas recentes:\n{dems}\n"
+            f"Agenda:\n{agenda}\n"
+            f"Você está no papel de assessora parlamentar: organize, contextualize, "
+            f"preserve o cidadão no centro. Não substitua decisão política."
+        )
+
     system = SYSTEM + ("\n\n---\n\n" + "\n\n".join(blocks) if blocks else "")
 
     messages = [Message(role="user" if t.speaker == "user" else "assistant", content=t.text)
@@ -89,17 +163,23 @@ class Ayra:
         self.llm = llm
 
     async def answer(
-        self, user_id: str, session_id: str, question: str
+        self,
+        user_id: str,
+        session_id: str,
+        question: str,
+        journey_id: str | None = None,
     ) -> AsyncIterator[tuple[str, str]]:
         """Emite ('token', texto) e, ao final, ('sources', json) e ('done', '').
 
         As fontes vão SEMPRE junto com a resposta (Cap. 127): o usuário tem que
         conseguir ver o que a Ayra leu para responder aquilo.
         """
-        self.memory.conversation.ensure_session(user_id, session_id)
+        self.memory.conversation.ensure_session(user_id, session_id, journey_id=journey_id)
         self.memory.conversation.add_turn(user_id, session_id, "user", question)
 
-        ctx = await self.memory.build_context(user_id, session_id, question)
+        ctx = await self.memory.build_context(
+            user_id, session_id, question, journey_id=journey_id
+        )
         system, messages = build_prompt(ctx, question)
 
         buffer: list[str] = []
@@ -119,6 +199,13 @@ class Ayra:
 
         import json as _json
         yield ("sources", _json.dumps(ctx.sources(), ensure_ascii=False))
+        if ctx.journey:
+            yield ("journey", _json.dumps({
+                "id": ctx.journey.id,
+                "title": ctx.journey.title,
+                "progress": ctx.journey.progress,
+                "domain": ctx.journey.domain,
+            }, ensure_ascii=False))
         yield ("done", "")
 
 
@@ -201,3 +288,65 @@ class Consolidator:
 
         log.info("sessão %s consolidada: %d fatos novos", session_id, saved)
         return saved
+
+
+# --------------------------------------------------------------------------
+# Planejamento de jornada (Cap. 20, Etapa 3)
+# --------------------------------------------------------------------------
+PLAN_SYSTEM = """Você é a Ayra planejando uma jornada no Atlas.
+
+Dado o objetivo declarado (e o que já se sabe do usuário), descubra o objetivo REAL,
+faça um diagnóstico breve e proponha de 4 a 7 passos concretos e sequenciais.
+
+Regras:
+- O objetivo real pode diferir do declarado (ex.: "estudar Excel" → "conseguir emprego").
+- Passos devem ser acionáveis, não genéricos.
+- diagnosis deve ser um objeto JSON com chaves curtas: nivel, prazo, recursos, prioridades.
+- Em português do Brasil.
+"""
+
+
+class JourneyPlanner:
+    """Etapa 3 do Cap. 20: a Ayra constrói o plano; o usuário pode editar depois."""
+
+    def __init__(self, memory: MemoryService, llm: LLM) -> None:
+        self.memory = memory
+        self.llm = llm
+
+    async def plan(self, user_id: str, journey_id: str) -> Journey | None:
+        from app.domain.models import JourneyPlan, JourneyStep
+
+        journey = self.memory.journeys.get(user_id, journey_id)
+        if not journey:
+            return None
+
+        personal = self.memory.personal.list(user_id, limit=20)
+        perfil = "\n".join(f"- [{m.category}] {m.content}" for m in personal) or "(sem memória pessoal)"
+
+        brief = (
+            f"Domínio: {journey.domain}\n"
+            f"Título: {journey.title}\n"
+            f"Objetivo declarado: {journey.stated_goal or journey.title}\n"
+            f"O que já sei do usuário:\n{perfil}"
+        )
+
+        plan = await self.llm.extract(PLAN_SYSTEM, brief, JourneyPlan)
+        if not plan.real_goal:
+            plan.real_goal = journey.stated_goal or journey.title
+
+        self.memory.journeys.set_goals(user_id, journey_id, plan.real_goal, plan.diagnosis or {})
+
+        if plan.steps:
+            steps = [
+                JourneyStep(
+                    journey_id=journey_id,
+                    user_id=user_id,
+                    order_index=0,
+                    title=s.title,
+                    description=s.description,
+                )
+                for s in plan.steps
+            ]
+            self.memory.journeys.add_steps(user_id, journey_id, steps)
+
+        return self.memory.journeys.get(user_id, journey_id)

@@ -230,3 +230,388 @@ CREATE TABLE IF NOT EXISTS memory_access_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_user ON memory_access_log (user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------
+-- Domínio Financeiro (Cap. 82–92) — Fase 1
+-- Contas, movimentos e metas. Indicadores de saúde são calculados, não
+-- persistidos: o snapshot muda a cada lançamento.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS finance_accounts (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'corrente'
+                CHECK (kind IN ('corrente', 'poupanca', 'investimento', 'carteira', 'cartao', 'outro')),
+    currency    TEXT NOT NULL DEFAULT 'BRL',
+    balance     REAL NOT NULL DEFAULT 0,
+    privacy     TEXT NOT NULL DEFAULT 'private'
+                CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fin_accounts_user ON finance_accounts (user_id);
+
+CREATE TABLE IF NOT EXISTS finance_transactions (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    account_id      TEXT NOT NULL,
+    to_account_id   TEXT,
+    kind            TEXT NOT NULL CHECK (kind IN ('receita', 'despesa', 'transferencia')),
+    amount          REAL NOT NULL CHECK (amount > 0),
+    category        TEXT NOT NULL DEFAULT 'geral',
+    description     TEXT NOT NULL DEFAULT '',
+    occurred_at     TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES finance_accounts (id) ON DELETE CASCADE,
+    FOREIGN KEY (to_account_id) REFERENCES finance_accounts (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fin_tx_user ON finance_transactions (user_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fin_tx_account ON finance_transactions (account_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fin_tx_category ON finance_transactions (user_id, category);
+
+CREATE TABLE IF NOT EXISTS finance_goals (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    journey_id      TEXT,
+    title           TEXT NOT NULL,
+    target_amount   REAL NOT NULL CHECK (target_amount > 0),
+    current_amount  REAL NOT NULL DEFAULT 0 CHECK (current_amount >= 0),
+    deadline        TEXT,
+    status          TEXT NOT NULL DEFAULT 'ativa'
+                    CHECK (status IN ('ativa', 'concluida', 'pausada', 'abandonada')),
+    privacy         TEXT NOT NULL DEFAULT 'private'
+                    CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    FOREIGN KEY (journey_id) REFERENCES journeys (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fin_goals_user ON finance_goals (user_id, status);
+
+-- Dívidas / empréstimos
+CREATE TABLE IF NOT EXISTS finance_debts (
+    id                   TEXT PRIMARY KEY,
+    user_id              TEXT NOT NULL,
+    name                 TEXT NOT NULL,
+    kind                 TEXT NOT NULL DEFAULT 'emprestimo'
+                         CHECK (kind IN ('emprestimo', 'cartao', 'financiamento', 'cheque_especial', 'outro')),
+    balance              REAL NOT NULL CHECK (balance >= 0),
+    interest_rate_month  REAL NOT NULL DEFAULT 0 CHECK (interest_rate_month >= 0),
+    installment          REAL NOT NULL DEFAULT 0 CHECK (installment >= 0),
+    due_day              INTEGER NOT NULL DEFAULT 1 CHECK (due_day >= 1 AND due_day <= 31),
+    lender               TEXT NOT NULL DEFAULT '',
+    notes                TEXT NOT NULL DEFAULT '',
+    status               TEXT NOT NULL DEFAULT 'ativa'
+                         CHECK (status IN ('ativa', 'quitada', 'pausada')),
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fin_debts_user ON finance_debts (user_id, status);
+
+-- Orçamento mensal por categoria
+CREATE TABLE IF NOT EXISTS finance_budget_caps (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    month         TEXT NOT NULL,
+    category      TEXT NOT NULL,
+    limit_amount  REAL NOT NULL CHECK (limit_amount >= 0),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fin_budget_cap
+    ON finance_budget_caps (user_id, month, category);
+CREATE INDEX IF NOT EXISTS idx_fin_budget_user ON finance_budget_caps (user_id, month);
+
+-- ---------------------------------------------------------------------
+-- Domínio Educação (Cap. 69–81) — estudo GERAL, não só idiomas
+-- Trilhas, sessões e competências. Idiomas são uma área entre muitas.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS study_tracks (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    journey_id    TEXT,
+    title         TEXT NOT NULL,
+    subject_area  TEXT NOT NULL DEFAULT 'geral',
+    -- exemplos: matematica | fisica | direito | medicina | programacao |
+    --           historia | administracao | idiomas | musica | outro | geral
+    level         TEXT NOT NULL DEFAULT 'iniciante'
+                  CHECK (level IN ('iniciante', 'intermediario', 'avancado')),
+    goal          TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'ativa'
+                  CHECK (status IN ('ativa', 'pausada', 'concluida', 'abandonada')),
+    privacy       TEXT NOT NULL DEFAULT 'private'
+                  CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (journey_id) REFERENCES journeys (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_tracks_user ON study_tracks (user_id, status);
+CREATE INDEX IF NOT EXISTS idx_study_tracks_area ON study_tracks (user_id, subject_area);
+
+CREATE TABLE IF NOT EXISTS study_sessions (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    track_id    TEXT NOT NULL,
+    minutes     INTEGER NOT NULL CHECK (minutes > 0),
+    notes       TEXT NOT NULL DEFAULT '',
+    topics      TEXT NOT NULL DEFAULT '[]',
+    occurred_at TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_sessions_track ON study_sessions (track_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_study_sessions_user ON study_sessions (user_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS competencies (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    track_id      TEXT,
+    name          TEXT NOT NULL,
+    subject_area  TEXT NOT NULL DEFAULT 'geral',
+    level         TEXT NOT NULL DEFAULT 'iniciar'
+                  CHECK (level IN ('iniciar', 'praticar', 'proficiente', 'dominio')),
+    evidence      TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'em_desenvolvimento'
+                  CHECK (status IN ('em_desenvolvimento', 'adquirida', 'a_revisar')),
+    privacy       TEXT NOT NULL DEFAULT 'private'
+                  CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_competencies_user ON competencies (user_id, status);
+
+-- Caderno de anotações: o que o aluno registrou que aprendeu (Cap. 61/72).
+CREATE TABLE IF NOT EXISTS study_notes (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    track_id    TEXT NOT NULL,
+    session_id  TEXT,
+    title       TEXT NOT NULL DEFAULT '',
+    content     TEXT NOT NULL,
+    topic       TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_notes_track ON study_notes (track_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_study_notes_user ON study_notes (user_id, created_at DESC);
+
+-- Capítulos da trilha (aula viva — Cap. 70/72)
+CREATE TABLE IF NOT EXISTS study_chapters (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    track_id      TEXT NOT NULL,
+    order_index   INTEGER NOT NULL,
+    title         TEXT NOT NULL,
+    summary       TEXT NOT NULL DEFAULT '',
+    objectives    TEXT NOT NULL DEFAULT '[]',  -- JSON array
+    status        TEXT NOT NULL DEFAULT 'pendente'
+                  CHECK (status IN ('pendente', 'em_progresso', 'concluido')),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_chapters_track ON study_chapters (track_id, order_index);
+
+-- Quizzes de checagem (Cap. 79 — evidência de competência)
+CREATE TABLE IF NOT EXISTS study_quizzes (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    track_id      TEXT NOT NULL,
+    chapter_id    TEXT,
+    title         TEXT NOT NULL,
+    questions     TEXT NOT NULL DEFAULT '[]',  -- JSON: [{id, pergunta, opcoes?, resposta_esperada, explicacao}]
+    answers       TEXT NOT NULL DEFAULT '[]',  -- JSON: [{question_id, resposta, correto?, feedback}]
+    score         REAL,                        -- 0..1
+    status        TEXT NOT NULL DEFAULT 'aberto'
+                  CHECK (status IN ('aberto', 'corrigido')),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE,
+    FOREIGN KEY (chapter_id) REFERENCES study_chapters (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_quizzes_track ON study_quizzes (track_id, created_at DESC);
+
+-- Materiais da trilha → nós do grafo (Cap. 71/117)
+CREATE TABLE IF NOT EXISTS study_materials (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    track_id      TEXT NOT NULL,
+    node_id       TEXT,              -- knowledge_nodes.id (Documento)
+    title         TEXT NOT NULL,
+    formato       TEXT NOT NULL DEFAULT 'text',
+    status        TEXT NOT NULL DEFAULT 'processando'
+                  CHECK (status IN ('processando', 'pronto', 'erro')),
+    created_at    TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE,
+    FOREIGN KEY (node_id) REFERENCES knowledge_nodes (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_materials_track ON study_materials (track_id, created_at DESC);
+
+-- Revisão espaçada (Cap. 78)
+CREATE TABLE IF NOT EXISTS study_review_cards (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    track_id        TEXT NOT NULL,
+    note_id         TEXT,
+    chapter_id      TEXT,
+    prompt          TEXT NOT NULL,
+    answer          TEXT NOT NULL DEFAULT '',
+    ease            REAL NOT NULL DEFAULT 2.5,
+    interval_days   INTEGER NOT NULL DEFAULT 1,
+    repetitions     INTEGER NOT NULL DEFAULT 0,
+    next_review_at  TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE,
+    FOREIGN KEY (note_id) REFERENCES study_notes (id) ON DELETE SET NULL,
+    FOREIGN KEY (chapter_id) REFERENCES study_chapters (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_reviews_due
+    ON study_review_cards (user_id, next_review_at);
+CREATE INDEX IF NOT EXISTS idx_study_reviews_track
+    ON study_review_cards (track_id, next_review_at);
+
+-- Plano semanal de estudo
+CREATE TABLE IF NOT EXISTS study_weekly_plans (
+    id               TEXT PRIMARY KEY,
+    user_id          TEXT NOT NULL,
+    track_id         TEXT,
+    week_start       TEXT NOT NULL,
+    target_minutes   INTEGER NOT NULL DEFAULT 180,
+    target_sessions  INTEGER NOT NULL DEFAULT 3,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    FOREIGN KEY (track_id) REFERENCES study_tracks (id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_study_weekly
+    ON study_weekly_plans (user_id, week_start, IFNULL(track_id, ''));
+
+CREATE INDEX IF NOT EXISTS idx_study_weekly_user ON study_weekly_plans (user_id, week_start DESC);
+
+-- ---------------------------------------------------------------------
+-- Domínio Gabinete Inteligente (Cap. 97–105)
+-- Cidadão no centro: demandas, linha do tempo, agenda.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS cabinet_citizens (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    municipality  TEXT NOT NULL DEFAULT '',
+    contact       TEXT NOT NULL DEFAULT '',
+    notes         TEXT NOT NULL DEFAULT '',
+    privacy       TEXT NOT NULL DEFAULT 'private'
+                  CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cabinet_citizens_user ON cabinet_citizens (user_id);
+CREATE INDEX IF NOT EXISTS idx_cabinet_citizens_muni ON cabinet_citizens (user_id, municipality);
+
+CREATE TABLE IF NOT EXISTS cabinet_demands (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    citizen_id    TEXT,
+    title         TEXT NOT NULL,
+    subject       TEXT NOT NULL DEFAULT '',
+    municipality  TEXT NOT NULL DEFAULT '',
+    category      TEXT NOT NULL DEFAULT 'geral',
+    priority      TEXT NOT NULL DEFAULT 'media'
+                  CHECK (priority IN ('baixa', 'media', 'alta', 'urgente')),
+    status        TEXT NOT NULL DEFAULT 'aberta'
+                  CHECK (status IN ('aberta', 'em_andamento', 'aguardando', 'concluida', 'arquivada')),
+    origin        TEXT NOT NULL DEFAULT '',
+    assignee      TEXT NOT NULL DEFAULT '',
+    due_date      TEXT,
+    result        TEXT NOT NULL DEFAULT '',
+    privacy       TEXT NOT NULL DEFAULT 'private'
+                  CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (citizen_id) REFERENCES cabinet_citizens (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cabinet_demands_user ON cabinet_demands (user_id, status);
+CREATE INDEX IF NOT EXISTS idx_cabinet_demands_muni ON cabinet_demands (user_id, municipality);
+
+CREATE TABLE IF NOT EXISTS cabinet_timeline (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    citizen_id    TEXT,
+    demand_id     TEXT,
+    municipality  TEXT NOT NULL DEFAULT '',
+    event_type    TEXT NOT NULL DEFAULT 'nota'
+                  CHECK (event_type IN ('contato', 'demanda', 'documento', 'visita', 'reuniao', 'retorno', 'nota')),
+    title         TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    occurred_at   TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    FOREIGN KEY (citizen_id) REFERENCES cabinet_citizens (id) ON DELETE SET NULL,
+    FOREIGN KEY (demand_id) REFERENCES cabinet_demands (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cabinet_timeline_user ON cabinet_timeline (user_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cabinet_timeline_citizen ON cabinet_timeline (citizen_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS cabinet_agenda (
+    id                 TEXT PRIMARY KEY,
+    user_id            TEXT NOT NULL,
+    title              TEXT NOT NULL,
+    municipality       TEXT NOT NULL DEFAULT '',
+    related_demand_id  TEXT,
+    starts_at          TEXT NOT NULL,
+    notes              TEXT NOT NULL DEFAULT '',
+    status             TEXT NOT NULL DEFAULT 'agendado'
+                       CHECK (status IN ('agendado', 'realizado', 'cancelado')),
+    privacy            TEXT NOT NULL DEFAULT 'private'
+                       CHECK (privacy IN ('public', 'private', 'restricted', 'ephemeral')),
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL,
+    FOREIGN KEY (related_demand_id) REFERENCES cabinet_demands (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cabinet_agenda_user ON cabinet_agenda (user_id, starts_at);
+
+-- ---------------------------------------------------------------------
+-- Ayra do dia seguinte — um empurrão por dia
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS daily_briefings (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    day           TEXT NOT NULL,
+    domain        TEXT NOT NULL DEFAULT 'geral',
+    view          TEXT NOT NULL DEFAULT 'ayra',
+    title         TEXT NOT NULL,
+    action_text   TEXT NOT NULL,
+    reason        TEXT NOT NULL DEFAULT '',
+    minutes       INTEGER NOT NULL DEFAULT 15,
+    status        TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'done', 'skipped')),
+    journey_id    TEXT,
+    ref_id        TEXT,
+    chat_opener   TEXT NOT NULL DEFAULT '',
+    signals       TEXT NOT NULL DEFAULT '[]',
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    FOREIGN KEY (journey_id) REFERENCES journeys (id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_briefing_user_day
+    ON daily_briefings (user_id, day);
+CREATE INDEX IF NOT EXISTS idx_daily_briefings_user
+    ON daily_briefings (user_id, day DESC);
