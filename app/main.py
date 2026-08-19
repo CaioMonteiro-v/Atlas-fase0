@@ -27,8 +27,10 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import cabinet, chat, education, finance, journeys, memory as memory_routes, morning
+from app.api import auth as auth_routes
 from app.core.config import get_settings
 from app.core.db import Database
+from app.core.security import auth_required
 from app.llm.fake import FakeLLM
 from app.llm.gemini import GeminiLLM
 from app.memory.service import MemoryService
@@ -90,6 +92,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_routes.router)
 app.include_router(chat.router)
 app.include_router(memory_routes.router)
 app.include_router(journeys.router)
@@ -112,7 +115,13 @@ async def unhandled(request: Request, exc: Exception):
 
 @app.get("/health", tags=["infra"])
 async def health(request: Request):
-    return {"status": "ok", "llm": request.app.state.llm.name}
+    settings = get_settings()
+    return {
+        "status": "ok",
+        "llm": request.app.state.llm.name,
+        "auth_required": auth_required(settings),
+        "open_access": settings.open_access,
+    }
 
 
 # ---------------------------------------------------------------------------

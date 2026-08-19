@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # só `core/security.py` muda; nenhuma rota é tocada.
     api_token: str = ""
     user_id: str = "caio"
+    # Uso solo (Render pessoal): ATLAS_OPEN_ACCESS=1 libera a API sem colar token.
+    # O site fica acessível a quem tiver a URL — ok pra uso pessoal.
+    open_access: bool = False
 
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:8000"]
 
@@ -50,8 +53,10 @@ PLACEHOLDER = "cole_sua_chave_do_ai_studio_aqui"
 def get_settings() -> Settings:
     s = Settings()
 
-    if s.is_prod and not s.api_token:
-        raise RuntimeError("ATLAS_API_TOKEN é obrigatório em produção.")
+    if s.is_prod and not s.api_token and not s.open_access:
+        raise RuntimeError(
+            "Em produção configure ATLAS_API_TOKEN, OU ATLAS_OPEN_ACCESS=1 para uso solo."
+        )
 
     if s.llm_provider == "gemini":
         # Falhar no boot, não na primeira mensagem. Um .env copiado sem editar

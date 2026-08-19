@@ -1,6 +1,7 @@
 const API = "";
 const TOKEN_KEY = "atlas_api_token";
 let TOKEN = localStorage.getItem(TOKEN_KEY) || "";
+let AUTH_REQUIRED = false;
 
 const state = {
   view: "home",
@@ -14,21 +15,42 @@ const state = {
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
+function normalizeClientToken(value) {
+  return String(value || "").trim().replace(/^["']|["']$/g, "");
+}
+
 function setToken(value) {
-  TOKEN = String(value || "").trim();
+  TOKEN = normalizeClientToken(value);
   if (TOKEN) localStorage.setItem(TOKEN_KEY, TOKEN);
   else localStorage.removeItem(TOKEN_KEY);
 }
 
-function askToken(reason = "A API pediu autenticação.") {
-  const current = TOKEN ? "(já tem um token salvo — cole outro pra trocar)" : "";
+async function loginWithToken(raw) {
+  const token = normalizeClientToken(raw);
+  if (!token) return false;
+  const res = await fetch(`${API}/auth/login`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  if (!res.ok) return false;
+  setToken(token);
+  return true;
+}
+
+async function askToken(reason = "A API pediu autenticação.") {
   const value = window.prompt(
-    `${reason}\n\nCole o mesmo ATLAS_API_TOKEN que está no Render.\n${current}`,
+    `${reason}\n\n1) Render → Environment → ATLAS_API_TOKEN\n2) clique no olho pra ver o valor\n3) copie TUDO e cole aqui\n\n(Ou no Render adicione ATLAS_OPEN_ACCESS=1 e redeploy — aí não precisa de token.)`,
     TOKEN,
   );
   if (value == null) return false;
-  setToken(value);
-  return Boolean(TOKEN);
+  const ok = await loginWithToken(value);
+  if (!ok) {
+    alert("Token não bateu com o do servidor. Confira ATLAS_API_TOKEN no Render (olho pra revelar) ou use ATLAS_OPEN_ACCESS=1.");
+    setToken("");
+  }
+  return ok;
 }
 
 function headers(json = true) {
@@ -41,6 +63,7 @@ function headers(json = true) {
 async function api(path, opts = {}, _retried = false) {
   const res = await fetch(`${API}${path}`, {
     ...opts,
+    credentials: "include",
     headers: { ...headers(!(opts.body instanceof FormData)), ...opts.headers },
   });
   if (res.status === 204) return null;
@@ -48,10 +71,10 @@ async function api(path, opts = {}, _retried = false) {
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
   if (res.status === 401 && !_retried) {
-    if (askToken("Token inválido ou ausente.")) {
+    if (await askToken("Token inválido ou ausente.")) {
       return api(path, opts, true);
     }
-    throw new Error("Sem token — nada foi salvo. Configure o ATLAS_API_TOKEN.");
+    throw new Error("Sem acesso — configure ATLAS_OPEN_ACCESS=1 no Render OU o ATLAS_API_TOKEN certo.");
   }
   if (!res.ok) {
     const detail = data?.detail || data?.erro || (typeof data === "string" ? data : null);
@@ -1865,10 +1888,12 @@ $("#btn-add-agenda").addEventListener("click", async () => {
   await loadCabinet();
 });
 
-$("#btn-api-token")?.addEventListener("click", () => {
-  if (askToken("Configure o acesso à API.")) {
-    alert(TOKEN ? "Token salvo neste navegador." : "Token removido.");
+$("#btn-api-token")?.addEventListener("click", async () => {
+  const ok = await askToken("Entrar / trocar token da API.");
+  if (ok) {
+    alert("Acesso ok. Pode usar o sistema.");
     if (state.view === "finance") loadFinance();
+    else loadHome();
   }
 });
 
@@ -1876,21 +1901,20 @@ $("#btn-api-token")?.addEventListener("click", () => {
 async function boot() {
   showWelcome();
   try {
-    // /health não exige token — evita prompt no boot
-    const res = await fetch(`${API}/health`);
+    const res = await fetch(`${API}/health`, { credentials: "include" });
     const h = res.ok ? await res.json() : null;
-    $("#llm-badge").textContent = h ? `llm · ${h.llm}` : "offline";
+    AUTH_REQUIRED = Boolean(h?.auth_required);
+    const mode = h?.open_access ? "open" : (AUTH_REQUIRED ? "auth" : "dev");
+    $("#llm-badge").textContent = h ? `llm · ${h.llm} · ${mode}` : "offline";
   } catch {
     $("#llm-badge").textContent = "offline";
   }
-  // Se o Render exige token e ainda não tem, pede uma vez cedo
-  if (!TOKEN) {
-    try {
-      await api("/finance/accounts");
-    } catch {
-      /* askToken já rodou no 401; segue o boot */
-    }
+
+  if (AUTH_REQUIRED && TOKEN) {
+    // tenta transformar token antigo do localStorage em cookie de sessão
+    await loginWithToken(TOKEN).catch(() => false);
   }
+
   await loadHome();
   await refreshJourneySelect();
 }
