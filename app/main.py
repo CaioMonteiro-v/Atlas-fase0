@@ -116,9 +116,10 @@ async def unhandled(request: Request, exc: Exception):
 @app.get("/health", tags=["infra"])
 async def health(request: Request):
     settings = get_settings()
+    llm = getattr(request.app.state, "llm", None)
     return {
         "status": "ok",
-        "llm": request.app.state.llm.name,
+        "llm": getattr(llm, "name", "n/a"),
         "auth_required": auth_required(settings),
         "open_access": settings.open_access,
     }
